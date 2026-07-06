@@ -48,4 +48,4 @@ app = FastAPI(title="Financial News AI Bridge", lifespan=lifespan)
 app.include_router(health_router)
 
 if __name__ == "__main__":
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=False)
+    uvicorn.run("app.main:app", host="0.0.0.0", port=settings.PORT, reload=False)

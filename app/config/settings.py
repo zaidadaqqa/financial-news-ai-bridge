@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     APP_ENV: str = Field(default="development")
     LOG_LEVEL: str = Field(default="INFO")
     TIMEZONE: str = Field(default="UTC")
+    PORT: int = Field(default=8000)
 
     # Features
     ENABLE_TRANSLATION: bool = Field(default=True)
