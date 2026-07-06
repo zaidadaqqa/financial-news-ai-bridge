@@ -1,0 +1,18 @@
+Actual -> الفعلي
+Forecast -> المتوقع
+Previous -> السابق
+Rate Cut -> خفض أسعار الفائدة
+Rate Hike -> رفع أسعار الفائدة
+Bond Yield -> عائد السندات
+Treasury -> سندات الخزانة
+Consumer Confidence -> ثقة المستهلك
+PMI -> مؤشر مديري المشتريات
+Manufacturing PMI -> مؤشر مديري المشتريات الصناعي
+Services PMI -> مؤشر مديري المشتريات الخدمي
+Core CPI -> التضخم الأساسي
+Headline CPI -> التضخم العام
+Missed Expectations -> جاء أقل من التوقعات
+Beat Expectations -> جاء أعلى من التوقعات
+Ceasefire -> وقف إطلاق النار
+Binding Commitments -> التزامات ملزمة
+Conditional Placement -> طرح مشروط

@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    env:
+      DISCORD_BOT_TOKEN: test-discord-token
+      DISCORD_GUILD_ID: "123456789"
+      DISCORD_SOURCE_CHANNEL_ID: "123456789"
+      DISCORD_APPLICATION_ID: "123456789"
+      TELEGRAM_BOT_TOKEN: test-telegram-token
+      TELEGRAM_CHAT_ID: "@testchannel"
+      AI_PROVIDER: openai
+      AI_MODEL: gpt-4o-mini
+      AI_API_KEY: test-ai-key
+      AI_BASE_URL: ""
+      DATABASE_URL: sqlite+aiosqlite:///./data/test.db
+      APP_ENV: test
+      LOG_LEVEL: INFO
+      TIMEZONE: UTC
+      ENABLE_TRANSLATION: "true"
+      ENABLE_AI_CACHE: "true"
+      ENABLE_MARKET_IMPACT: "true"
+      ENABLE_DUPLICATE_DETECTION: "true"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Check formatting
+        run: black --check .
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Type check
+        run: mypy app tests
+
+      - name: Test
+        run: pytest
+
+      - name: Build Docker image
+        run: docker build -t financial-news-ai-bridge:ci .
