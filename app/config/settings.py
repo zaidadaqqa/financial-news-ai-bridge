@@ -3,14 +3,19 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    # Discord
-    DISCORD_BOT_TOKEN: SecretStr = Field(..., description="Discord Bot Token")
-    DISCORD_GUILD_ID: int = Field(..., description="Discord Server ID")
-    DISCORD_SOURCE_CHANNEL_ID: int = Field(
-        ..., description="Source Channel ID to monitor"
+    # News ingestion — RSS (primary, free, no auth)
+    FJ_RSS_URL: str = Field(
+        default="https://www.financialjuice.com/feed.ashx?xy=rss",
+        description="FinancialJuice RSS feed URL",
     )
-    DISCORD_APPLICATION_ID: int | None = Field(
-        None, description="Discord Application ID"
+    RSS_POLL_INTERVAL: int = Field(
+        default=30,
+        description="Seconds between RSS polls",
+    )
+    # News ingestion — WebSocket Stream API (optional upgrade; set to enable real-time)
+    FJ_STREAM_API_KEY: SecretStr | None = Field(
+        None,
+        description="FinancialJuice Stream API key for real-time feed (optional)",
     )
 
     # Telegram

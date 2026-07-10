@@ -43,9 +43,9 @@ async def test_end_to_end_pipeline() -> None:
         orchestrator.publisher.edit_message = edit_mock  # type: ignore[method-assign]
         orchestrator.ai_provider.generate_financial_translation = ai_mock  # type: ignore[method-assign]
 
-        await orchestrator.process_discord_message(
-            message_id="msg_1",
-            channel_id="chan_1",
+        await orchestrator.process_message(
+            source_id="9001001",
+            source="rss",
             headline="US Non-Farm Payrolls at 100k, previous 100k, forecast 100k",
             source_url="http://test.com",
         )
@@ -53,7 +53,7 @@ async def test_end_to_end_pipeline() -> None:
         await asyncio.sleep(0.2)
 
         result = await session.execute(
-            select(NewsEvent).filter_by(discord_message_id="msg_1")
+            select(NewsEvent).filter_by(source_message_id="9001001")
         )
         news = result.scalars().first()
 
@@ -63,6 +63,7 @@ async def test_end_to_end_pipeline() -> None:
         assert news.translated_headline == MOCK_AI_RESPONSE["translation_ar"]
         assert news.category == "economic_data"
         assert news.importance == 3
+        assert news.source == "rss"
 
         publish_mock.assert_called_once()
         ai_mock.assert_called_once()
@@ -70,7 +71,7 @@ async def test_end_to_end_pipeline() -> None:
 
 
 @pytest.mark.asyncio
-async def test_duplicate_discord_message_id_skipped() -> None:
+async def test_duplicate_source_message_id_skipped() -> None:
     async with TestSessionLocal() as session:
         orchestrator = NewsOrchestrator(session)
 
@@ -89,17 +90,17 @@ async def test_duplicate_discord_message_id_skipped() -> None:
         orchestrator.publisher.edit_message = AsyncMock(return_value=True)  # type: ignore[method-assign]
         orchestrator.ai_provider.generate_financial_translation = ai_mock  # type: ignore[method-assign]
 
-        await orchestrator.process_discord_message(
-            message_id="dup_msg",
-            channel_id="chan_1",
+        await orchestrator.process_message(
+            source_id="9002000",
+            source="rss",
             headline="Test news 50k jobs",
             source_url="http://test.com/1",
         )
         await asyncio.sleep(0.1)
 
-        await orchestrator.process_discord_message(
-            message_id="dup_msg",
-            channel_id="chan_1",
+        await orchestrator.process_message(
+            source_id="9002000",
+            source="rss",
             headline="Test news 50k jobs",
             source_url="http://test.com/1",
         )
@@ -107,7 +108,7 @@ async def test_duplicate_discord_message_id_skipped() -> None:
 
         assert (
             publish_mock.call_count == 1
-        ), "Duplicate message should not be published twice"
+        ), "Duplicate source_message_id should not be published twice"
 
 
 @pytest.mark.asyncio
@@ -133,17 +134,17 @@ async def test_duplicate_content_fingerprint_skipped() -> None:
         orchestrator.publisher.edit_message = AsyncMock(return_value=True)  # type: ignore[method-assign]
         orchestrator.ai_provider.generate_financial_translation = ai_mock  # type: ignore[method-assign]
 
-        await orchestrator.process_discord_message(
-            message_id="msg_fp_1",
-            channel_id="chan_1",
+        await orchestrator.process_message(
+            source_id="9003001",
+            source="rss",
             headline="EURUSD rate at 75",
             source_url="http://test.com/fp",
         )
         await asyncio.sleep(0.1)
 
-        await orchestrator.process_discord_message(
-            message_id="msg_fp_2",
-            channel_id="chan_1",
+        await orchestrator.process_message(
+            source_id="9003002",
+            source="rss",
             headline="EURUSD rate at 75",
             source_url="http://test.com/fp",
         )
@@ -167,16 +168,16 @@ async def test_ai_failure_keeps_initial_message() -> None:
             side_effect=Exception("AI timed out")
         )
 
-        await orchestrator.process_discord_message(
-            message_id="msg_ai_fail",
-            channel_id="chan_1",
+        await orchestrator.process_message(
+            source_id="9004001",
+            source="rss",
             headline="Gold prices surge 5%",
             source_url=None,
         )
         await asyncio.sleep(0.2)
 
         result = await session.execute(
-            select(NewsEvent).filter_by(discord_message_id="msg_ai_fail")
+            select(NewsEvent).filter_by(source_message_id="9004001")
         )
         news = result.scalars().first()
 
@@ -197,16 +198,16 @@ async def test_telegram_failure_marks_record_failed() -> None:
             side_effect=Exception("Telegram connection refused")
         )
 
-        await orchestrator.process_discord_message(
-            message_id="msg_tg_fail",
-            channel_id="chan_1",
+        await orchestrator.process_message(
+            source_id="9005001",
+            source="rss",
             headline="Breaking: Fed emergency meeting",
             source_url=None,
         )
         await asyncio.sleep(0.1)
 
         result = await session.execute(
-            select(NewsEvent).filter_by(discord_message_id="msg_tg_fail")
+            select(NewsEvent).filter_by(source_message_id="9005001")
         )
         news = result.scalars().first()
 

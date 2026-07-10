@@ -29,18 +29,18 @@ class NewsOrchestrator:
         self.publisher = TelegramPublisher()
         self.ai_provider = OpenAIProvider()
 
-    async def process_discord_message(
+    async def process_message(
         self,
-        message_id: str,
-        channel_id: str,
+        source_id: str,
+        source: str,
         headline: str,
         source_url: str | None = None,
     ) -> None:
-        logger.info("Received new discord message", message_id=message_id)
+        logger.info("Received news item", source=source, source_id=source_id)
 
         normalized = normalize_text(headline)
         if not normalized:
-            logger.warning("Empty normalized headline, skipping", message_id=message_id)
+            logger.warning("Empty normalized headline, skipping", source_id=source_id)
             return
 
         news_hash = generate_news_hash(normalized, source_url)
@@ -55,8 +55,9 @@ class NewsOrchestrator:
             return
 
         news = NewsEvent(
-            discord_message_id=message_id,
-            source_channel_id=channel_id,
+            source_message_id=source_id,
+            source=source,
+            source_channel_id=None,
             source_url=source_url,
             original_headline=headline,
             normalized_headline=normalized,
@@ -70,8 +71,8 @@ class NewsOrchestrator:
         except IntegrityError:
             await self.session.rollback()
             logger.info(
-                "Duplicate discord_message_id blocked by database constraint",
-                message_id=message_id,
+                "Duplicate source_message_id blocked by database constraint",
+                source_id=source_id,
             )
             return
 
@@ -88,7 +89,7 @@ class NewsOrchestrator:
             logger.error(
                 "Failed to publish initial telegram message",
                 error=safe_err,
-                message_id=message_id,
+                source_id=source_id,
             )
             news.status = NewsStatus.FAILED
             news.last_error = safe_err

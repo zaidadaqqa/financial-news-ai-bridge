@@ -29,13 +29,14 @@ def utcnow() -> datetime:
 class NewsEvent(Base):
     __tablename__ = "news"
     __table_args__ = (
-        UniqueConstraint("discord_message_id", name="uq_news_discord_message_id"),
+        UniqueConstraint("source_message_id", name="uq_news_source_message_id"),
     )
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_uuid)
-    discord_message_id: Mapped[str] = mapped_column(String, nullable=False)
+    source_message_id: Mapped[str] = mapped_column(String, nullable=False)
+    source: Mapped[str] = mapped_column(String, nullable=False, default="rss")
     telegram_message_id: Mapped[str | None] = mapped_column(String, nullable=True)
-    source_channel_id: Mapped[str] = mapped_column(String, nullable=False)
+    source_channel_id: Mapped[str | None] = mapped_column(String, nullable=True)
     source_url: Mapped[str | None] = mapped_column(String, nullable=True)
 
     original_headline: Mapped[str] = mapped_column(Text, nullable=False)

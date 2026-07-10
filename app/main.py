@@ -10,16 +10,15 @@ from fastapi import FastAPI
 from app.api.health import router as health_router
 from app.config.settings import settings
 from app.log.logger import get_logger, setup_logging
-from app.services.discord.bot import BridgeDiscordClient
+from app.services.ingestion.rss_poller import RSSPoller
 
 setup_logging(settings.LOG_LEVEL)
 logger = get_logger(__name__)
 
-_discord_client: BridgeDiscordClient | None = None
+_rss_poller: RSSPoller | None = None
 
 
 def _run_migrations() -> None:
-    """Run Alembic migrations synchronously using a plain sqlite3 connection."""
     import subprocess
     import sys
 
@@ -37,7 +36,7 @@ def _run_migrations() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
-    global _discord_client
+    global _rss_poller
 
     logger.info("Starting Financial News AI Bridge", env=settings.APP_ENV)
 
@@ -47,24 +46,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         logger.error("Migration failed, aborting startup", error=type(e).__name__)
         raise
 
-    token = settings.DISCORD_BOT_TOKEN.get_secret_value()
-    if token and not token.startswith("replace-") and token != "test-discord-token":
-        _discord_client = BridgeDiscordClient()
-        discord_task = asyncio.create_task(_discord_client.start(token))
-        logger.info("Discord bot starting in background")
-    else:
-        logger.warning("DISCORD_BOT_TOKEN not configured — Discord bot will not start")
-        discord_task = None
+    _rss_poller = RSSPoller()
+    rss_task = asyncio.create_task(_rss_poller.start())
+    logger.info("RSS poller started in background")
 
     yield
 
     logger.info("Shutting down gracefully...")
-    if _discord_client and not _discord_client.is_closed():
-        await _discord_client.close()
-    if discord_task and not discord_task.done():
-        discord_task.cancel()
+    if _rss_poller:
+        await _rss_poller.close()
+    if rss_task and not rss_task.done():
+        rss_task.cancel()
         try:
-            await asyncio.wait_for(discord_task, timeout=5.0)
+            await asyncio.wait_for(rss_task, timeout=5.0)
         except (asyncio.CancelledError, TimeoutError):
             pass
     logger.info("Shutdown complete")
