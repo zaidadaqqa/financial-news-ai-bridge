@@ -32,6 +32,9 @@ class RSSPoller:
         self._running = False
         self._etag: str | None = None
         self._last_modified: str | None = None
+        # Set when empty-DB initial scan fails — any feed item older than this
+        # timestamp is skipped to prevent flooding Telegram on cold start.
+        self._cold_start_cutoff: datetime | None = None
 
     async def start(self) -> None:
         self._client = httpx.AsyncClient(
@@ -92,7 +95,9 @@ class RSSPoller:
     async def _initial_feed_scan(self) -> None:
         """On first run (empty DB), silently mark all current feed items as seen.
 
-        Prevents flooding Telegram with historical news on the first startup.
+        If the feed request is rate-limited, falls back to a time-based cutoff:
+        any item published before service startup is skipped in subsequent polls,
+        preventing a Telegram flood even when the ID-based scan cannot complete.
         """
         assert self._client is not None
         try:
@@ -107,16 +112,29 @@ class RSSPoller:
                             self._seen_ids.add(guid)
                     self._etag = response.headers.get("ETag")
                     self._last_modified = response.headers.get("Last-Modified")
+                logger.info(
+                    "RSS: initial scan complete — existing items marked as seen, "
+                    "will only publish new items going forward",
+                    seen_count=len(self._seen_ids),
+                )
+                return
+            # 429 or other non-200: fall through to time-based protection
+            logger.warning(
+                "RSS: initial scan returned non-200, enabling time-based cold-start protection",
+                status=response.status_code,
+            )
         except Exception as e:
             logger.warning(
-                "RSS: initial feed scan failed, starting fresh",
+                "RSS: initial feed scan failed, enabling time-based cold-start protection",
                 error_type=type(e).__name__,
                 detail=str(e)[:80],
             )
+
+        # Fallback: skip any feed item published before right now
+        self._cold_start_cutoff = datetime.now(UTC)
         logger.info(
-            "RSS: initial scan complete — existing items marked as seen, "
-            "will only publish new items going forward",
-            seen_count=len(self._seen_ids),
+            "RSS: cold-start cutoff set — items older than startup time will be skipped",
+            cutoff=self._cold_start_cutoff.isoformat(),
         )
 
     async def close(self) -> None:
@@ -206,6 +224,12 @@ class RSSPoller:
                 pub_date = parsedate_to_datetime(pub_date_str)
             except Exception:
                 pub_date = datetime.now(UTC)
+
+            # Cold-start protection: when the initial ID-based scan failed,
+            # skip any item published before service startup to prevent flooding.
+            if self._cold_start_cutoff and pub_date <= self._cold_start_cutoff:
+                self._seen_ids.add(guid)
+                continue
 
             new_items.append(
                 {"guid": guid, "title": title, "link": link, "pub_date": pub_date}
