@@ -1,0 +1,24 @@
+name: Deploy to Oracle Cloud
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: SSH Deploy
+    runs-on: ubuntu-latest
+    # Only runs when SSH secrets are configured in repository settings.
+    # Set ORACLE_SSH_HOST, ORACLE_SSH_USER, ORACLE_SSH_KEY in GitHub Secrets.
+    if: ${{ vars.ORACLE_DEPLOY_ENABLED == 'true' }}
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.ORACLE_SSH_HOST }}
+          username: ${{ secrets.ORACLE_SSH_USER }}
+          key: ${{ secrets.ORACLE_SSH_KEY }}
+          script: |
+            bash /opt/financial-news-ai-bridge/scripts/update_oracle.sh

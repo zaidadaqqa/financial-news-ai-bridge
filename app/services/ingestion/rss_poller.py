@@ -16,6 +16,13 @@ logger = get_logger(__name__)
 
 _FJ_PREFIX = "FinancialJuice: "
 
+# Updated by _poll_once on every successful feed fetch; read by health endpoint.
+_last_poll_time: datetime | None = None
+
+
+def get_last_poll_time() -> datetime | None:
+    return _last_poll_time
+
 # Conservative headers — avoid triggering WAF rate limits
 _HEADERS = {
     "User-Agent": "FinancialBridge/2.0 RSS Reader",
@@ -172,6 +179,9 @@ class RSSPoller:
 
         response = await self._client.get(settings.FJ_RSS_URL, headers=req_headers)
         response.raise_for_status()
+
+        global _last_poll_time
+        _last_poll_time = datetime.now(UTC)
 
         if response.status_code == 304:
             return  # Feed unchanged since last poll
