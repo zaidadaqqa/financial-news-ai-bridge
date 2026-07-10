@@ -1,232 +1,262 @@
 # Financial News AI Bridge
 
-Financial News AI Bridge listens for financial news in Discord, enriches and translates each item with an AI provider, deduplicates repeated headlines, and publishes formatted alerts to Telegram.
+A production-grade service that listens to the FinancialJuice Discord channel, processes financial news with AI, and publishes professional Arabic translations and market analysis to a Telegram channel.
+
+## Architecture
+
+```mermaid
+sequenceDiagram
+    participant Discord
+    participant Bridge as Financial News AI Bridge
+    participant DB as SQLite Database
+    participant Telegram
+    participant AI as OpenAI GPT-4o-mini
+
+    Discord->>Bridge: New financial news message
+    Bridge->>DB: Deduplicate (hash + discord_message_id)
+    Bridge->>DB: Store news record (RECEIVED)
+    Bridge->>Telegram: Send initial English message
+    Bridge->>DB: Save Telegram message ID (TELEGRAM_PENDING)
+    Bridge->>AI: Generate Arabic translation + analysis
+    AI->>Bridge: Structured JSON response
+    Bridge->>Bridge: Validate (numbers, schema)
+    Bridge->>Telegram: Edit message with Arabic version
+    Bridge->>DB: Mark as PUBLISHED
+```
 
 ## Features
 
-- Discord message ingestion with channel and guild checks.
-- AI-powered Arabic translation, summarization, classification, and market impact metadata.
-- Duplicate detection using normalized headline hashes.
-- Telegram publishing with retry handling.
-- FastAPI health endpoint for deployment checks.
-- Async SQLAlchemy storage with Alembic migrations.
-- Docker and GitHub Actions CI support.
+- **Real-time Discord monitoring** — Listens to the FinancialJuice channel only
+- **Instant Telegram delivery** — Posts initial English message within seconds
+- **Professional Arabic translation** — GPT-4o-mini with structured JSON output
+- **Market analysis** — Importance, market bias, affected assets, and impact summary
+- **Strict number preservation** — Validates all percentages, prices, and values are preserved exactly
+- **Duplicate prevention** — Content fingerprint hashing + Discord message ID uniqueness constraint
+- **Restart recovery** — Resumes interrupted processing after restart
+- **Graceful shutdown** — SIGTERM handling, Discord disconnect, connection cleanup
+- **Structured logging** — JSON logs, no secrets exposed
+- **Health endpoint** — `/health` for platform monitoring
 
-## Requirements
+## Technology Stack
 
-- Python 3.13
-- Docker, optional but recommended for deployment parity
-- Discord bot token with Message Content Intent enabled
-- Telegram bot token and destination chat/channel
-- AI provider API key, currently OpenAI-compatible by default
+| Component | Technology |
+|-----------|------------|
+| Runtime | Python 3.12 |
+| Web framework | FastAPI + Uvicorn |
+| Discord client | discord.py 2.7+ |
+| Telegram client | HTTP API via httpx |
+| AI provider | OpenAI GPT-4o-mini |
+| Database | SQLite + aiosqlite |
+| ORM | SQLAlchemy 2.0 (async) |
+| Migrations | Alembic |
+| Retries | tenacity (exponential backoff) |
+| Logging | structlog (JSON) |
+| Deployment | Railway / Docker |
 
-## Configuration
+## Processing Pipeline
 
-Copy the example file and fill in local values:
+1. Start service and apply database migrations
+2. Start Discord bot in background
+3. Receive message from FinancialJuice Discord channel
+4. Normalize and fingerprint the content
+5. Check for duplicates (hash + message ID)
+6. Store news record in database
+7. Send initial English message to Telegram (fast path)
+8. Save Telegram message ID
+9. Call OpenAI with structured JSON schema
+10. Validate AI output (required fields, number preservation)
+11. Edit the same Telegram message with Arabic version + analysis
+12. Mark database record as `PUBLISHED`
 
-```bash
-cp .env.example .env
+## Folder Structure
+
+```
+financial-news-ai-bridge/
+├── app/
+│   ├── api/health.py          # Health check endpoint
+│   ├── config/settings.py     # Pydantic settings (env-based)
+│   ├── constants/enums.py     # NewsStatus, NewsCategory, MarketBias
+│   ├── database/connection.py # Async SQLAlchemy engine
+│   ├── exceptions/            # Custom exception hierarchy
+│   ├── log/logger.py          # structlog configuration
+│   ├── main.py                # FastAPI app + lifespan + SIGTERM handler
+│   ├── models/news.py         # SQLAlchemy models
+│   ├── repositories/          # Database access layer
+│   ├── services/
+│   │   ├── ai/                # OpenAI provider
+│   │   ├── discord/bot.py     # Discord client + message handler
+│   │   ├── formatting/        # Telegram HTML formatter
+│   │   ├── news/orchestrator  # Main processing pipeline
+│   │   ├── telegram/          # Telegram publisher
+│   │   └── validation/        # AI output + number validator
+│   └── utils/                 # Hashing, text normalization
+├── alembic/                   # Database migrations
+├── prompts/
+│   ├── translator.txt         # AI system prompt
+│   └── glossary.txt           # Financial Arabic glossary
+├── tests/                     # Pytest test suite
+├── .env.example               # Template for environment variables
+├── Dockerfile                 # Python 3.12 slim image
+├── docker-compose.yml         # Local deployment with named volume
+└── railway.json               # Railway deployment configuration
 ```
 
-Never commit `.env`. Only `.env.example` belongs in Git.
+## Environment Variables
 
-Required environment variables:
+Copy `.env.example` to `.env` and fill in your values.
 
-| Variable | Description |
-| --- | --- |
-| `DISCORD_BOT_TOKEN` | Discord bot token. |
-| `DISCORD_GUILD_ID` | Discord server ID to monitor. |
-| `DISCORD_SOURCE_CHANNEL_ID` | Discord channel ID to read from. |
-| `DISCORD_APPLICATION_ID` | Discord application ID, optional for some flows. |
-| `TELEGRAM_BOT_TOKEN` | Telegram bot token. |
-| `TELEGRAM_CHAT_ID` | Telegram target chat ID, channel username, or numeric ID. |
-| `AI_PROVIDER` | AI provider name. Use `openai` unless adding another provider. |
-| `AI_MODEL` | Model name, for example `gpt-4o-mini`. |
-| `AI_API_KEY` | AI provider API key. |
-| `AI_BASE_URL` | Optional OpenAI-compatible base URL. Leave blank for OpenAI. |
-| `DATABASE_URL` | SQLAlchemy database URL. Defaults to SQLite. |
-| `APP_ENV` | Runtime environment, for example `development` or `production`. |
-| `LOG_LEVEL` | Logging level, for example `INFO` or `DEBUG`. |
-| `TIMEZONE` | Application timezone string. |
-| `PORT` | Runtime port. Railway provides this automatically; local default is `8000`. |
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `DISCORD_BOT_TOKEN` | Yes | Discord bot token from Developer Portal |
+| `DISCORD_GUILD_ID` | Yes | Discord server (guild) ID |
+| `DISCORD_SOURCE_CHANNEL_ID` | Yes | FinancialJuice channel ID to monitor |
+| `DISCORD_APPLICATION_ID` | No | Discord application ID |
+| `TELEGRAM_BOT_TOKEN` | Yes | Telegram bot token from @BotFather |
+| `TELEGRAM_CHAT_ID` | Yes | Target channel or group ID (e.g. `-100...`) |
+| `TELEGRAM_THREAD_ID` | No | Thread/topic ID for supergroups |
+| `AI_PROVIDER` | Yes | `openai` (default) |
+| `AI_MODEL` | Yes | `gpt-4o-mini` (default) |
+| `AI_API_KEY` | Yes | OpenAI API key |
+| `AI_BASE_URL` | No | Override for OpenAI-compatible API endpoint |
+| `DATABASE_URL` | Yes | `sqlite+aiosqlite:///data/news.db` (default) |
+| `LOG_LEVEL` | No | `INFO` (default) |
+| `PORT` | No | `8000` (default) |
+| `APP_ENV` | No | `production` |
 
-Optional feature flags are supported by settings and default to enabled:
-
-- `ENABLE_TRANSLATION`
-- `ENABLE_AI_CACHE`
-- `ENABLE_MARKET_IMPACT`
-- `ENABLE_DUPLICATE_DETECTION`
-
-## Local Development
-
-Install dependencies:
+## Local Setup
 
 ```bash
-python -m venv venv
-source venv/bin/activate
-python -m pip install --upgrade pip
+# Clone the repository
+git clone https://github.com/zaidadaqqa/financial-news-ai-bridge.git
+cd financial-news-ai-bridge
+
+# Create virtual environment
+python3.12 -m venv .venv
+source .venv/bin/activate
+
+# Install dependencies
 pip install -r requirements.txt
-```
 
-Run the service:
+# Configure environment
+cp .env.example .env
+# Edit .env with your credentials
 
-```bash
+# Start the service (migrations run automatically)
 python -m app.main
 ```
 
-Health check:
+## Docker Setup
 
 ```bash
-curl http://localhost:${PORT:-8000}/health
-```
+# Build and start
+docker compose up -d --build
 
-## Quality Checks
-
-Run the same checks used by CI:
-
-```bash
-black --check .
-ruff check .
-mypy app tests
-pytest
-docker build -t financial-news-ai-bridge:local .
-```
-
-Use `black .` and `ruff check . --fix` for formatting and safe lint fixes during development.
-
-## Docker
-
-Build and run with Docker Compose:
-
-```bash
-cp .env.example .env
-# edit .env with real local values
-docker compose up --build -d
-```
-
-View logs:
-
-```bash
+# View logs
 docker compose logs -f ai-bridge
-```
 
-Stop the service:
+# Restart
+docker compose restart ai-bridge
 
-```bash
+# Stop
 docker compose down
 ```
 
-The compose file mounts `./data` to persist the SQLite database locally. For managed production hosting, prefer a managed PostgreSQL database or a persistent disk for SQLite.
+The SQLite database is stored in a named Docker volume (`db_data`) for persistence across restarts.
 
-## Deployment
+## Testing
 
-1. Build from the Dockerfile or deploy this repository to a Docker-capable host.
-2. Add the required environment variables in the hosting platform's secrets/settings UI.
-3. Ensure the app binds to `0.0.0.0` and reads the platform-provided `PORT`.
-4. Configure the health check path as `/health`.
-5. Use persistent storage for `/app/data` if `DATABASE_URL` points to SQLite.
-6. For PostgreSQL, set `DATABASE_URL` to an async SQLAlchemy URL and include the required driver dependency before deploying.
+```bash
+# Run all tests
+pytest
 
-Hosting secrets to add:
+# Run with verbose output
+pytest -v
 
-```text
-DISCORD_BOT_TOKEN
-DISCORD_GUILD_ID
-DISCORD_SOURCE_CHANNEL_ID
-DISCORD_APPLICATION_ID
-TELEGRAM_BOT_TOKEN
-TELEGRAM_CHAT_ID
-AI_PROVIDER
-AI_MODEL
-AI_API_KEY
-AI_BASE_URL
-DATABASE_URL
-APP_ENV
-LOG_LEVEL
-TIMEZONE
-ENABLE_TRANSLATION
-ENABLE_AI_CACHE
-ENABLE_MARKET_IMPACT
-ENABLE_DUPLICATE_DETECTION
+# Type check
+mypy app tests
+
+# Format check
+black --check .
+
+# Lint
+ruff check .
 ```
 
-Do not place real secret values in GitHub Actions workflow files, Dockerfiles, Compose files, or documentation.
+## Deployment on Railway
 
+1. Connect your GitHub repository to Railway
+2. Set all environment variables from `.env.example` in Railway's variable settings
+3. Add a volume mount at `/app/data` for database persistence
+4. Railway will use the `railway.json` configuration automatically
 
-## Railway Deployment
+Start command: `python -m app.main`
+Health check path: `/health`
 
-This repository includes `railway.json`, so Railway will build the root `Dockerfile`, start the service with `python -m app.main`, and check `/health`. The application binds to `0.0.0.0` and reads Railway's `PORT` variable through the app settings.
+## Database and Migrations
 
-### Recommended Database Setup
+The service uses SQLite with Alembic for schema migrations.
+Migrations run automatically at startup — no manual action required.
 
-For the first deployment, SQLite is acceptable if you attach a Railway volume and set:
-
-```text
-DATABASE_URL=sqlite+aiosqlite:////app/data/news.db
+To manually apply migrations:
+```bash
+alembic upgrade head
 ```
 
-Attach the volume to the service at:
-
-```text
-/app/data
+To check migration status:
+```bash
+alembic current
+alembic history
 ```
 
-Without a Railway volume, SQLite data is ephemeral and can be lost between deployments. For stronger production durability, use a managed PostgreSQL database instead of SQLite. If you switch to PostgreSQL, update `DATABASE_URL` to an async SQLAlchemy PostgreSQL URL and add the async PostgreSQL driver dependency before deploying.
+The database is **never deleted on startup**. Existing records are preserved.
 
-### Railway Variables
+If tables are accidentally dropped (e.g. by running tests against the production DB):
+```bash
+alembic stamp base && alembic upgrade head
+```
 
-Add these variables in the Railway service Variables tab. Do not commit these values to Git.
+## Logging
 
-| Variable | Railway value guidance |
-| --- | --- |
-| `DISCORD_BOT_TOKEN` | Real Discord bot token. |
-| `DISCORD_GUILD_ID` | Numeric Discord server ID. |
-| `DISCORD_SOURCE_CHANNEL_ID` | Numeric Discord source channel ID. |
-| `DISCORD_APPLICATION_ID` | Numeric Discord application ID. |
-| `TELEGRAM_BOT_TOKEN` | Real Telegram bot token. |
-| `TELEGRAM_CHAT_ID` | Telegram channel username or numeric chat ID. |
-| `AI_PROVIDER` | `openai`. |
-| `AI_MODEL` | Model name, for example `gpt-4o-mini`. |
-| `AI_API_KEY` | Real AI provider API key. |
-| `AI_BASE_URL` | Leave empty for OpenAI, or set an OpenAI-compatible base URL. |
-| `DATABASE_URL` | `sqlite+aiosqlite:////app/data/news.db` when using a Railway volume at `/app/data`. |
-| `APP_ENV` | `production`. |
-| `LOG_LEVEL` | `INFO`. |
-| `TIMEZONE` | `UTC` or your preferred timezone. |
+Logs are structured JSON emitted to stdout. Safe fields only — no tokens, API keys, or raw content.
 
-Railway provides `PORT`; you do not need to set it manually.
+Key log events to monitor:
+- `Starting Financial News AI Bridge`
+- `Database migrations applied successfully`
+- `Discord bot starting in background`
+- `Received new discord message`
+- `Duplicate news detected by hash, skipping`
+- `Telegram message sent`
+- `Telegram message edited`
+- `Successfully processed and published news`
+- `AI validation/generation failed`
+- `Shutting down gracefully...`
 
-### Click-by-click Railway Setup
+## Discord Setup
 
-1. Open https://railway.com and sign in.
-2. Click **New Project**.
-3. Click **Deploy from GitHub repo**.
-4. If prompted, click **Configure GitHub App** and grant Railway access to `zaidadaqqa/financial-news-ai-bridge`.
-5. Select `zaidadaqqa/financial-news-ai-bridge`.
-6. Select the `main` branch.
-7. Wait for Railway to create the service. The first deploy may fail until variables are added.
-8. Open the service, then open the **Variables** tab.
-9. Add every variable listed in the Railway Variables table above.
-10. Open the service **Settings** tab.
-11. Confirm the build uses the root `Dockerfile`; `railway.json` also declares this.
-12. Confirm the healthcheck path is `/health`.
-13. For SQLite persistence, open the project canvas, click **Create** or **New**, choose **Volume**, attach it to the app service, and set the mount path to `/app/data`.
-14. Confirm `DATABASE_URL` is `sqlite+aiosqlite:////app/data/news.db`.
-15. Open the **Deployments** tab and click **Redeploy** if Railway does not redeploy automatically after variable changes.
-16. After deployment succeeds, open the service public URL and visit `/health`. It should return `{"status":"ok","service":"Financial News AI Bridge"}`.
-17. Check the **Logs** tab for Discord startup and Telegram publishing errors.
+1. Create a bot at https://discord.com/developers/applications
+2. Enable **Message Content Intent** under Bot → Privileged Gateway Intents
+3. Invite the bot to your server with `View Channel`, `Read Messages`, and `Read Message History` permissions
+4. Copy the bot token to `DISCORD_BOT_TOKEN`
+5. Enable Developer Mode in Discord settings, then right-click the channel → Copy Channel ID
 
-## GitHub Actions
+## Security Notes
 
-The CI workflow runs on pushes and pull requests to `main`:
+- Never commit `.env` to version control (protected by `.gitignore`)
+- Never commit `data/news.db` (protected by `.gitignore`)
+- The `.env.example` contains only variable names, never real values
+- Logs never output tokens, API keys, or sensitive API responses
+- The Docker image does not copy `.env` or `data/` into the image
+- The container runs as a non-root user (`appuser`)
 
-- Install dependencies
-- `black --check .`
-- `ruff check .`
-- `mypy app tests`
-- `pytest`
-- Docker image build
+## Troubleshooting
 
-## License
+| Symptom | Likely Cause | Fix |
+|---------|-------------|-----|
+| `Discord LoginFailure` | Bot token expired or revoked | Regenerate token in Discord Developer Portal |
+| `Telegram: chat not found` | Wrong `TELEGRAM_CHAT_ID` | Use numeric ID with `-100` prefix for channels |
+| `Missing required field` | AI response schema mismatch | Check prompt in `prompts/translator.txt` |
+| `Number X missing from AI output` | AI dropped a numerical value | The record will be marked `AI_FAILED` automatically |
+| Database tables missing | Tests ran against production DB | Run `alembic stamp base && alembic upgrade head` |
+| Port already in use | Another process on port 8000 | Change `PORT` in `.env` |
 
-This project is released under the MIT License. See [LICENSE](LICENSE).
+> **Warning:** Never commit credentials. If you accidentally expose a token, revoke it immediately from the relevant platform.

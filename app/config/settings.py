@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     # Telegram
     TELEGRAM_BOT_TOKEN: SecretStr = Field(..., description="Telegram Bot Token")
     TELEGRAM_CHAT_ID: str = Field(..., description="Telegram Chat ID to publish to")
+    TELEGRAM_THREAD_ID: int | None = Field(
+        None, description="Telegram topic/thread ID (optional)"
+    )
 
     # AI Provider
     AI_PROVIDER: str = Field(default="openai")
