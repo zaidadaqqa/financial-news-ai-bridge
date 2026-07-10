@@ -39,7 +39,7 @@ class RSSPoller:
             timeout=httpx.Timeout(30.0),
             follow_redirects=True,
         )
-        await self._seed_seen_ids()
+        initial_scan = await self._seed_seen_ids()
         self._running = True
         logger.info(
             "RSS poller started",
@@ -47,6 +47,11 @@ class RSSPoller:
             interval_seconds=settings.RSS_POLL_INTERVAL,
             seeded_ids=len(self._seen_ids),
         )
+
+        # After an initial scan we already fetched the feed; wait one full
+        # interval before the first regular poll to avoid an immediate 429.
+        if initial_scan:
+            await asyncio.sleep(settings.RSS_POLL_INTERVAL)
 
         backoff = 0
         while self._running:
@@ -119,7 +124,8 @@ class RSSPoller:
         if self._client:
             await self._client.aclose()
 
-    async def _seed_seen_ids(self) -> None:
+    async def _seed_seen_ids(self) -> bool:
+        """Seed seen IDs from DB. Returns True if an initial feed scan was performed."""
         async with AsyncSessionLocal() as session:
             result = await session.execute(select(NewsEvent.source_message_id))
             self._seen_ids = set(result.scalars().all())
@@ -128,12 +134,14 @@ class RSSPoller:
             logger.info(
                 "RSS poller seeded seen IDs from database", count=len(self._seen_ids)
             )
+            return False
         else:
             logger.info(
                 "RSS poller: empty database detected — performing initial feed scan "
                 "to avoid posting historical items"
             )
             await self._initial_feed_scan()
+            return True
 
     async def _poll_once(self) -> None:
         assert self._client is not None
