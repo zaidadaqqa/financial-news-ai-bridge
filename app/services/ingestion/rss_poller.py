@@ -120,12 +120,12 @@ class RSSPoller:
                 return
             # 429 or other non-200: fall through to time-based protection
             logger.warning(
-                "RSS: initial scan returned non-200, enabling time-based cold-start protection",
+                "RSS: initial scan non-200, cold-start protection enabled",
                 status=response.status_code,
             )
         except Exception as e:
             logger.warning(
-                "RSS: initial feed scan failed, enabling time-based cold-start protection",
+                "RSS: initial scan failed, cold-start protection enabled",
                 error_type=type(e).__name__,
                 detail=str(e)[:80],
             )
@@ -133,7 +133,7 @@ class RSSPoller:
         # Fallback: skip any feed item published before right now
         self._cold_start_cutoff = datetime.now(UTC)
         logger.info(
-            "RSS: cold-start cutoff set — items older than startup time will be skipped",
+            "RSS: cold-start cutoff set — skipping pre-startup items",
             cutoff=self._cold_start_cutoff.isoformat(),
         )
 
