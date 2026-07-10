@@ -1,0 +1,29 @@
+[Unit]
+Description=Financial News AI Bridge
+Documentation=https://github.com/zaidadaqqa/financial-news-ai-bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=finbridge
+Group=finbridge
+WorkingDirectory=/opt/financial-news-ai-bridge
+EnvironmentFile=/opt/financial-news-ai-bridge/.env
+ExecStart=/opt/financial-news-ai-bridge/.venv/bin/python -m app.main
+
+Restart=always
+RestartSec=10
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=financial-news-ai-bridge
+
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

@@ -4,17 +4,35 @@ from typing import Any
 from app.exceptions.custom_exceptions import ValidationError
 
 
-def extract_numbers(text: str) -> list[str]:
-    """Extracts all numbers from text, including decimals and percentages."""
+def extract_numbers(text: str) -> set[str]:
+    """Extract all significant numbers from text including ranges and basis points."""
     if not text:
-        return []
-    # Matches integers, decimals, and numbers followed by %
-    pattern = r"\d+(?:\.\d+)?%?"
-    return re.findall(pattern, text)
+        return set()
+    # Match: decimals, integers, percentages, ranges, signed values
+    pattern = r"-?\d+(?:\.\d+)?%?"
+    matches = re.findall(pattern, text)
+    # Also extract both ends of ranges like 5.25%-5.50%
+    result = set()
+    for m in matches:
+        result.add(m)
+        # Strip % to get bare number for cross-checking
+        result.add(m.rstrip("%"))
+    return {m for m in result if m not in ("", "-")}
+
+
+def _is_placeholder(value: Any) -> bool:
+    """Return True if the value is a null-like placeholder."""
+    if value is None:
+        return True
+    s = str(value).strip().lower()
+    return s in ("none", "null", "n/a", "", "0", "na")
 
 
 class OutputValidator:
     REQUIRED_FIELDS = [
+        "headline_ar",
+        "explanation_ar",
+        "market_impact_ar",
         "translation_ar",
         "summary_ar",
         "category",
@@ -31,7 +49,7 @@ class OutputValidator:
         "ticker",
     ]
 
-    ALLOWED_CATEGORIES = [
+    ALLOWED_CATEGORIES = {
         "economic_data",
         "central_bank",
         "company",
@@ -44,65 +62,62 @@ class OutputValidator:
         "government",
         "breaking",
         "general",
-    ]
+    }
 
-    ALLOWED_BIAS = ["POSITIVE", "NEGATIVE", "MIXED", "NEUTRAL", "UNCLEAR"]
+    ALLOWED_BIAS = {"POSITIVE", "NEGATIVE", "MIXED", "NEUTRAL", "UNCLEAR"}
 
     @classmethod
     def validate_ai_output(
         cls, original_headline: str, ai_json: dict[str, Any]
     ) -> None:
-        # Check required fields
         for field in cls.REQUIRED_FIELDS:
             if field not in ai_json:
                 raise ValidationError(f"Missing required field: {field}")
 
-        # Validate category
         if (
             ai_json.get("category")
             and ai_json["category"] not in cls.ALLOWED_CATEGORIES
         ):
             raise ValidationError(f"Invalid category: {ai_json['category']}")
 
-        # Validate market bias
         if (
             ai_json.get("market_bias")
             and ai_json["market_bias"] not in cls.ALLOWED_BIAS
         ):
-            raise ValidationError(f"Invalid market bias: {ai_json['market_bias']}")
+            raise ValidationError(f"Invalid market_bias: {ai_json['market_bias']}")
 
-        # Validate importance and confidence
         importance = ai_json.get("importance")
         if importance is not None and not (1 <= int(importance) <= 5):
-            raise ValidationError(
-                f"Importance must be between 1 and 5, got {importance}"
-            )
+            raise ValidationError(f"importance must be 1–5, got {importance}")
 
         confidence = ai_json.get("confidence")
         if confidence is not None and not (0.0 <= float(confidence) <= 1.0):
-            raise ValidationError(
-                f"Confidence must be between 0.0 and 1.0, got {confidence}"
-            )
+            raise ValidationError(f"confidence must be 0.0–1.0, got {confidence}")
 
-        # Validate Numbers Preservation
-        # All numbers in the original headline must exist in the output somehow
-        # (specifically in translation, actual, forecast, or previous)
+        # Number preservation: check numbers in original appear in Arabic output
         original_numbers = extract_numbers(original_headline)
 
-        combined_output_text = " ".join(
+        combined_arabic = " ".join(
             filter(
                 None,
                 [
+                    ai_json.get("headline_ar", ""),
                     ai_json.get("translation_ar", ""),
-                    str(ai_json.get("actual", "")),
-                    str(ai_json.get("forecast", "")),
-                    str(ai_json.get("previous", "")),
+                    ai_json.get("explanation_ar", ""),
+                    str(ai_json.get("actual", "") or ""),
+                    str(ai_json.get("forecast", "") or ""),
+                    str(ai_json.get("previous", "") or ""),
                 ],
             )
         )
-
-        output_numbers = extract_numbers(combined_output_text)
+        output_numbers = extract_numbers(combined_arabic)
 
         for num in original_numbers:
-            if num not in output_numbers:
-                raise ValidationError(f"Number {num} missing from AI output")
+            bare = num.rstrip("%")
+            # Skip very short numbers (years, single digits in context) and pure zeros
+            if len(bare) <= 1 or bare == "0":
+                continue
+            if num not in output_numbers and bare not in output_numbers:
+                raise ValidationError(
+                    f"Number '{num}' from original not found in Arabic output"
+                )

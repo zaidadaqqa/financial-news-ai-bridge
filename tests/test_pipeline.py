@@ -9,6 +9,26 @@ from app.models.news import NewsEvent
 from app.services.news.orchestrator import NewsOrchestrator
 from tests.conftest import TestSessionLocal
 
+MOCK_AI_RESPONSE = {
+    "headline_ar": "عدد وظائف القطاع غير الزراعي الأمريكي يبلغ 100 ألف وظيفة",
+    "explanation_ar": "أعلنت وزارة العمل الأمريكية أن عدد الوظائف المضافة في القطاع غير الزراعي بلغ 100 ألف وظيفة.",  # noqa: E501
+    "market_impact_ar": "قد يُشير الرقم إلى تباطؤ سوق العمل مما قد يدعم توقعات خفض أسعار الفائدة.",  # noqa: E501
+    "translation_ar": "الوظائف غير الزراعية الأمريكية عند 100 ألف، السابق 100 ألف، المتوقع 100 ألف",  # noqa: E501
+    "summary_ar": "تعادلت بيانات سوق العمل مع التوقعات والقراءة السابقة.",
+    "category": "economic_data",
+    "importance": 3,
+    "confidence": 0.9,
+    "market_bias": "POSITIVE",
+    "impact": "Neutral for USD given data matches forecast",
+    "affected_assets": ["USD"],
+    "actual": "100",
+    "forecast": "100",
+    "previous": "100",
+    "currency": "USD",
+    "company": None,
+    "ticker": None,
+}
+
 
 @pytest.mark.asyncio
 async def test_end_to_end_pipeline() -> None:
@@ -17,24 +37,8 @@ async def test_end_to_end_pipeline() -> None:
 
         publish_mock = AsyncMock(return_value="tg_123")
         edit_mock = AsyncMock(return_value=True)
-        ai_mock = AsyncMock(
-            return_value={
-                "translation_ar": "الترجمة 100",
-                "summary_ar": "الملخص",
-                "category": "economic_data",
-                "importance": 3,
-                "confidence": 0.9,
-                "market_bias": "POSITIVE",
-                "impact": "Test impact",
-                "affected_assets": ["USD"],
-                "actual": "100",
-                "forecast": "100",
-                "previous": "100",
-                "currency": "USD",
-                "company": "None",
-                "ticker": "None",
-            }
-        )
+        ai_mock = AsyncMock(return_value=MOCK_AI_RESPONSE)
+
         orchestrator.publisher.publish_message = publish_mock  # type: ignore[method-assign]
         orchestrator.publisher.edit_message = edit_mock  # type: ignore[method-assign]
         orchestrator.ai_provider.generate_financial_translation = ai_mock  # type: ignore[method-assign]
@@ -56,7 +60,7 @@ async def test_end_to_end_pipeline() -> None:
         assert news is not None
         assert news.telegram_message_id == "tg_123"
         assert news.status == NewsStatus.PUBLISHED
-        assert news.translated_headline == "الترجمة 100"
+        assert news.translated_headline == MOCK_AI_RESPONSE["translation_ar"]
         assert news.category == "economic_data"
         assert news.importance == 3
 
@@ -73,20 +77,12 @@ async def test_duplicate_discord_message_id_skipped() -> None:
         publish_mock = AsyncMock(return_value="tg_dup")
         ai_mock = AsyncMock(
             return_value={
+                **MOCK_AI_RESPONSE,
+                "headline_ar": "خبر تجريبي 50",
                 "translation_ar": "ترجمة 50",
-                "summary_ar": "ملخص",
-                "category": "economic_data",
-                "importance": 2,
-                "confidence": 0.8,
-                "market_bias": "NEUTRAL",
-                "impact": "Neutral",
-                "affected_assets": [],
                 "actual": "50",
                 "forecast": "50",
                 "previous": "50",
-                "currency": None,
-                "company": None,
-                "ticker": None,
             }
         )
         orchestrator.publisher.publish_message = publish_mock  # type: ignore[method-assign]
@@ -96,7 +92,7 @@ async def test_duplicate_discord_message_id_skipped() -> None:
         await orchestrator.process_discord_message(
             message_id="dup_msg",
             channel_id="chan_1",
-            headline="Test news 50",
+            headline="Test news 50k jobs",
             source_url="http://test.com/1",
         )
         await asyncio.sleep(0.1)
@@ -104,7 +100,7 @@ async def test_duplicate_discord_message_id_skipped() -> None:
         await orchestrator.process_discord_message(
             message_id="dup_msg",
             channel_id="chan_1",
-            headline="Test news 50",
+            headline="Test news 50k jobs",
             source_url="http://test.com/1",
         )
         await asyncio.sleep(0.1)
@@ -122,20 +118,15 @@ async def test_duplicate_content_fingerprint_skipped() -> None:
         publish_mock = AsyncMock(return_value="tg_fp")
         ai_mock = AsyncMock(
             return_value={
-                "translation_ar": "ترجمة 75",
-                "summary_ar": "ملخص",
-                "category": "forex",
-                "importance": 2,
-                "confidence": 0.7,
-                "market_bias": "NEUTRAL",
-                "impact": "Neutral",
-                "affected_assets": ["EUR"],
+                **MOCK_AI_RESPONSE,
+                "headline_ar": "سعر EURUSD عند 75",
+                "translation_ar": "معدل EURUSD عند 75",
                 "actual": "75",
                 "forecast": "75",
                 "previous": "75",
+                "category": "forex",
                 "currency": "EUR",
-                "company": None,
-                "ticker": None,
+                "affected_assets": ["EUR", "USD"],
             }
         )
         orchestrator.publisher.publish_message = publish_mock  # type: ignore[method-assign]
@@ -192,6 +183,7 @@ async def test_ai_failure_keeps_initial_message() -> None:
         assert news is not None
         assert news.telegram_message_id == "tg_fail"
         assert news.status == NewsStatus.FAILED
+        assert news.last_error is not None
         publish_mock.assert_called_once()
         edit_mock.assert_not_called()
 
@@ -221,3 +213,4 @@ async def test_telegram_failure_marks_record_failed() -> None:
         assert news is not None
         assert news.status == NewsStatus.FAILED
         assert news.telegram_message_id is None
+        assert news.last_error is not None
