@@ -23,6 +23,7 @@ _last_poll_time: datetime | None = None
 def get_last_poll_time() -> datetime | None:
     return _last_poll_time
 
+
 # Conservative headers — avoid triggering WAF rate limits
 _HEADERS = {
     "User-Agent": "FinancialBridge/2.0 RSS Reader",
