@@ -12,6 +12,7 @@ from app.models.news import NewsEvent
 from app.repositories.news_repository import NewsRepository
 from app.services.ai.openai_provider import OpenAIProvider
 from app.services.formatting.telegram_formatter import TelegramFormatter
+from app.services.intelligence.engine import classify_news
 from app.services.telegram.publisher import TelegramPublisher
 from app.services.validation.validator import OutputValidator
 from app.utils.hashing import generate_news_hash
@@ -108,8 +109,32 @@ class NewsOrchestrator:
         await self.news_repo.commit()
 
         try:
+            # Deterministic, local, near-zero-latency classification — recomputed
+            # here (not in the fast path) so it never touches initial-publish
+            # latency. classify_news() is designed to never raise on its own
+            # (internal safe-fallback), but it still runs inside this try block
+            # so a record can never get stuck at AI_PENDING forever if something
+            # truly unexpected happens — it fails the same way any other AI-stage
+            # error does. See NEWS_INTELLIGENCE_ARCHITECTURE.md §3/§13.
+            intelligence = classify_news(news.normalized_headline, news.source_url)
+            logger.info(
+                "News classified",
+                category=intelligence.category,
+                urgency=intelligence.urgency,
+                is_fallback=intelligence.is_fallback,
+            )
+            logger.debug(
+                "News classification detail",
+                country=intelligence.country,
+                currency=intelligence.currency,
+                central_bank=intelligence.central_bank,
+                economic_event=intelligence.economic_event,
+                surprise=intelligence.surprise_direction,
+                reasons=intelligence.classification_reasons,
+            )
+
             ai_data = await self.ai_provider.generate_financial_translation(
-                news.normalized_headline
+                news.normalized_headline, intelligence
             )
 
             OutputValidator.validate_ai_output(news.normalized_headline, ai_data)
@@ -143,7 +168,9 @@ class NewsOrchestrator:
             await self.news_repo.commit()
 
             if news.telegram_message_id:
-                final_text = TelegramFormatter.format_premium_bilingual(news, ai_data)
+                final_text = TelegramFormatter.format_premium_bilingual(
+                    news, ai_data, intelligence
+                )
                 await self.publisher.edit_message(news.telegram_message_id, final_text)
 
                 news.status = NewsStatus.PUBLISHED

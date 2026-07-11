@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from app.models.news import NewsEvent
+from app.services.intelligence.models import NewsIntelligenceResult, Urgency
 
 IMPORTANCE_LABELS_AR = {
     1: "منخفضة",
@@ -79,7 +80,11 @@ class TelegramFormatter:
         )
 
     @staticmethod
-    def format_premium_bilingual(news: NewsEvent, ai_data: dict[str, Any]) -> str:
+    def format_premium_bilingual(
+        news: NewsEvent,
+        ai_data: dict[str, Any],
+        intelligence: NewsIntelligenceResult | None = None,
+    ) -> str:
         parts: list[str] = []
 
         importance_raw = ai_data.get("importance", 2)
@@ -88,13 +93,27 @@ class TelegramFormatter:
         except (ValueError, TypeError):
             importance_int = 2
 
-        category = str(ai_data.get("category") or "")
+        # Category authority: the engine's classification wins when confident
+        # (NEWS_INTELLIGENCE_ARCHITECTURE.md §7) — the AI no longer controls the
+        # header icon in that case. Falls back to Phase 1's exact behavior
+        # (AI's self-reported category) when intelligence is unavailable/fallback.
+        if intelligence is not None and not intelligence.is_fallback:
+            category = intelligence.category.value
+        else:
+            category = str(ai_data.get("category") or "")
 
         # Headline — icon signals story type: breaking/critical always wins,
         # otherwise the category carries the icon, else a plain default.
+        # intelligence.urgency==BREAKING is a stronger, independently-computed
+        # signal than the AI's own importance rating for this specific escalation.
+        engine_says_breaking = (
+            intelligence is not None
+            and not intelligence.is_fallback
+            and intelligence.urgency == Urgency.BREAKING
+        )
         headline_ar = ai_data.get("headline_ar") or ai_data.get("translation_ar", "")
         if headline_ar:
-            if importance_int >= 5 or category == "breaking":
+            if importance_int >= 5 or category == "breaking" or engine_says_breaking:
                 icon = "🚨"
             else:
                 icon = CATEGORY_ICONS.get(category, "📰")
