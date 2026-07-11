@@ -35,6 +35,7 @@ class OutputValidator:
         "market_impact_ar",
         "translation_ar",
         "summary_ar",
+        "what_to_watch_ar",
         "category",
         "importance",
         "confidence",
@@ -66,6 +67,17 @@ class OutputValidator:
 
     ALLOWED_BIAS = {"POSITIVE", "NEGATIVE", "MIXED", "NEUTRAL", "UNCLEAR"}
 
+    # These carry the actual message content — an empty string would pass a bare
+    # key-existence check but publish a visibly broken message. Fields not listed
+    # here (what_to_watch_ar, actual, forecast, ...) are legitimately nullable.
+    NON_EMPTY_TEXT_FIELDS = [
+        "headline_ar",
+        "explanation_ar",
+        "market_impact_ar",
+        "translation_ar",
+        "summary_ar",
+    ]
+
     @classmethod
     def validate_ai_output(
         cls, original_headline: str, ai_json: dict[str, Any]
@@ -73,6 +85,10 @@ class OutputValidator:
         for field in cls.REQUIRED_FIELDS:
             if field not in ai_json:
                 raise ValidationError(f"Missing required field: {field}")
+
+        for field in cls.NON_EMPTY_TEXT_FIELDS:
+            if not str(ai_json.get(field) or "").strip():
+                raise ValidationError(f"Field '{field}' must not be empty")
 
         if (
             ai_json.get("category")
@@ -104,6 +120,7 @@ class OutputValidator:
                     ai_json.get("headline_ar", ""),
                     ai_json.get("translation_ar", ""),
                     ai_json.get("explanation_ar", ""),
+                    ai_json.get("what_to_watch_ar", "") or "",
                     str(ai_json.get("actual", "") or ""),
                     str(ai_json.get("forecast", "") or ""),
                     str(ai_json.get("previous", "") or ""),

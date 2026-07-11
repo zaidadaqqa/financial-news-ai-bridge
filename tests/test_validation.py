@@ -9,6 +9,7 @@ BASE_AI_OUTPUT = {
     "market_impact_ar": "قد يدعم الارتفاع الدولار الأمريكي على المدى القصير.",
     "translation_ar": "ارتفع مؤشر مديري المشتريات الخدمي الأمريكي إلى 54.2",
     "summary_ar": "تحسن القطاع الخدمي",
+    "what_to_watch_ar": "ترقب صدور مؤشر مديري المشتريات الصناعي الأسبوع المقبل",
     "category": "economic_data",
     "importance": 3,
     "confidence": 0.9,
@@ -67,6 +68,12 @@ def test_validator_fails_invalid_category() -> None:
 def test_validator_fails_invalid_bias() -> None:
     bad_output = {**BASE_AI_OUTPUT, "market_bias": "BULLISH"}
     with pytest.raises(ValidationError, match="Invalid market_bias"):
+        OutputValidator.validate_ai_output("US PMI at 54.2", bad_output)
+
+
+def test_validator_fails_empty_required_text_field() -> None:
+    bad_output = {**BASE_AI_OUTPUT, "explanation_ar": "   "}
+    with pytest.raises(ValidationError, match="explanation_ar"):
         OutputValidator.validate_ai_output("US PMI at 54.2", bad_output)
 
 

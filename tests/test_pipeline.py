@@ -15,6 +15,7 @@ MOCK_AI_RESPONSE = {
     "market_impact_ar": "قد يُشير الرقم إلى تباطؤ سوق العمل مما قد يدعم توقعات خفض أسعار الفائدة.",  # noqa: E501
     "translation_ar": "الوظائف غير الزراعية الأمريكية عند 100 ألف، السابق 100 ألف، المتوقع 100 ألف",  # noqa: E501
     "summary_ar": "تعادلت بيانات سوق العمل مع التوقعات والقراءة السابقة.",
+    "what_to_watch_ar": None,
     "category": "economic_data",
     "importance": 3,
     "confidence": 0.9,
