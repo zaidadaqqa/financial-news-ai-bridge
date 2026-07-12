@@ -3,8 +3,30 @@ from datetime import UTC, datetime
 from typing import Any
 
 from app.models.news import NewsEvent
-from app.services.intelligence.models import NewsIntelligenceResult, Urgency
+from app.services.formatting.editorial_engine import (
+    ASSETS,
+    CONTEXT,
+    DATA,
+    EXPLANATION,
+    IMPACT,
+    WATCH,
+    select_editorial_mode,
+)
+from app.services.intelligence.models import (
+    NewsIntelligenceResult,
+    NumericSurprise,
+)
 from app.services.story.models import RelationshipType, StoryDecision
+
+# Deterministic verdict vocabulary for the economic-data block: a numeric
+# fact about the print vs the forecast — never a good/bad judgment (that is
+# the AI's analysis, in its own clearly-framed section). UNKNOWN renders
+# nothing, ever.
+_SURPRISE_VERDICTS_AR = {
+    NumericSurprise.HIGHER: "أعلى من التوقعات",
+    NumericSurprise.LOWER: "أدنى من التوقعات",
+    NumericSurprise.MATCH: "مطابقة للتوقعات",
+}
 
 IMPORTANCE_LABELS_AR = {
     1: "منخفضة",
@@ -168,6 +190,12 @@ class TelegramFormatter:
         show_interpretation = importance_int >= 2
         show_optional_sections = importance_int >= 3
 
+        # Editorial Engine (NEWSROOM_DNA.md §12): deterministic mode selection
+        # BEFORE rendering. One unified visual DNA; the mode decides badge,
+        # icon authority, and section hierarchy. Pure presentation — category/
+        # urgency/story authority stays with the intelligence engines.
+        plan = select_editorial_mode(intelligence, story, ai_data)
+
         # Category authority: the engine's classification wins when confident
         # (NEWS_INTELLIGENCE_ARCHITECTURE.md §7) — the AI no longer controls the
         # header icon in that case. Falls back to Phase 1's exact behavior
@@ -177,22 +205,18 @@ class TelegramFormatter:
         else:
             category = str(ai_data.get("category") or "")
 
-        # Headline — icon signals story type: breaking/critical always wins,
-        # otherwise the category carries the icon, else a plain default.
-        # intelligence.urgency==BREAKING is a stronger, independently-computed
-        # signal than the AI's own importance rating for this specific escalation.
-        engine_says_breaking = (
-            intelligence is not None
-            and not intelligence.is_fallback
-            and intelligence.urgency == Urgency.BREAKING
-        )
+        # Headline — the hero element. Exactly one primary icon (🚨 when the
+        # mode says breaking, else the category icon), plus the mode's badge
+        # («عاجل» / «تصحيح» / «تحديث» — never stacked) so the reader knows the
+        # message TYPE before reading a word of the text.
         headline_ar = ai_data.get("headline_ar") or ai_data.get("translation_ar", "")
         if headline_ar:
-            if importance_int >= 5 or category == "breaking" or engine_says_breaking:
+            if plan.force_siren:
                 icon = "🚨"
             else:
                 icon = _category_icon(category, ai_data.get("affected_assets"))
-            parts.append(f"{icon} <b>{_esc(headline_ar)}</b>")
+            badge = f"{plan.badge} | " if plan.badge else ""
+            parts.append(f"{icon} <b>{badge}{_esc(headline_ar)}</b>")
             # Breathing room before the divider so the headline reads as the
             # message's hero element rather than crowding straight into the
             # rule below it (final editorial polish, NEWSROOM_DNA.md §11).
@@ -200,22 +224,22 @@ class TelegramFormatter:
 
         parts.append(SEPARATOR)
 
-        # Explanation — confirmed fact, always shown: what happened and why
-        # it matters. Comes before any interpretation or numbers (§16: Fact
-        # before Interpretation).
+        # ------------------------------------------------------------------
+        # Build each section as an independent fragment; the editorial mode's
+        # section_order assembles them. Every gate below is identical across
+        # all modes — modes reorder, they never un-gate.
+        # ------------------------------------------------------------------
+        fragments: dict[str, list[str]] = {}
+
+        # Explanation — confirmed fact: what happened and why it matters.
         explanation = ai_data.get("explanation_ar", "")
         if explanation and not _is_empty(explanation):
-            parts.append(_esc(explanation))
-            parts.append("")
+            fragments[EXPLANATION] = [_esc(explanation), ""]
 
-        # Story context (Phase 3) — one concise line of background fact: the
-        # story's previous PUBLISHED development. Shown only when the
-        # application established a confident UPDATE/CORRECTION relationship,
-        # a published Arabic prior exists, and the story clears the same
-        # importance floor as interpretation (§16 of
-        # STORY_INTELLIGENCE_ARCHITECTURE.md). REPETITION/NEW_STORY/
-        # uncertain/fallback never render context. This is stored, validated
-        # data — never AI-generated text — so it cannot fabricate history.
+        # Story context (Phase 3) — the story's previous PUBLISHED
+        # development. Confident UPDATE/CORRECTION with a published Arabic
+        # prior, importance ≥ 2 only. Stored, validated data — never
+        # AI-generated — so it cannot fabricate history.
         if (
             story is not None
             and story.relationship
@@ -224,22 +248,19 @@ class TelegramFormatter:
             and not _is_empty(story.prior_headline_ar)
             and show_interpretation
         ):
-            parts.append("🔗 <b>السياق:</b>")
-            parts.append(_esc(story.prior_headline_ar))
-            parts.append("")
+            fragments[CONTEXT] = [
+                "🔗 <b>السياق:</b>",
+                _esc(story.prior_headline_ar),
+                "",
+            ]
 
-        # Economic data section — the raw numbers, presented immediately
-        # after the fact and BEFORE any interpretation (§12/§16/§17). Never
-        # importance-gated: if the figures exist, they are the story.
+        # Economic data — the validated numbers, never importance-gated,
+        # labels bold / values plain, fixed actual→forecast→previous order,
+        # missing or dash-placeholder rows omitted cleanly.
         actual = ai_data.get("actual")
         forecast = ai_data.get("forecast")
         previous = ai_data.get("previous")
 
-        # Labels bold, values plain (final Phase 2 polish): the label is the
-        # anchor the eye scans for; the value reads naturally beside it.
-        # Order is fixed — actual, forecast, previous — and a missing or
-        # dash-placeholder value is omitted cleanly (its row simply doesn't
-        # exist), never rendered as an empty or fake figure.
         data_rows = []
         if not _is_empty(actual):
             data_rows.append(f"  <b>الفعلي:</b> {_esc(str(actual))}")
@@ -248,30 +269,36 @@ class TelegramFormatter:
         if not _is_empty(previous):
             data_rows.append(f"  <b>السابق:</b> {_esc(str(previous))}")
 
-        if data_rows:
-            parts.append("📊 <b>البيانات الاقتصادية:</b>")
-            parts.extend(data_rows)
-            parts.append("")
+        # Deterministic verdict (Editorial DNA upgrade): rendered from the
+        # intelligence engine's Decimal-validated comparison, ONLY when a real
+        # forecast was present on both the engine's and the AI's side and the
+        # comparison succeeded. Numeric fact only ("above forecast") — never
+        # a market-direction judgment; that stays in the AI's impact section,
+        # clearly framed as analysis.
+        if (
+            data_rows
+            and intelligence is not None
+            and not intelligence.is_fallback
+            and intelligence.forecast is not None
+            and not _is_empty(forecast)
+        ):
+            verdict = _SURPRISE_VERDICTS_AR.get(intelligence.surprise_direction)
+            if verdict:
+                data_rows.append(f"  <b>النتيجة:</b> {verdict}")
 
-        # Market impact analysis — interpretation, comes after the facts and
-        # numbers, and only once the story clears the importance-2 floor
-        # (§15: importance-1 is headline + one context sentence + source only).
+        if data_rows:
+            fragments[DATA] = ["📊 <b>البيانات الاقتصادية:</b>", *data_rows, ""]
+
+        # Market impact — interpretation, importance ≥ 2 only.
         market_impact = ai_data.get("market_impact_ar", "")
         if show_interpretation and market_impact and not _is_empty(market_impact):
-            parts.append("⚡ <b>التأثير على الأسواق:</b>")
-            parts.append(_esc(market_impact))
-            parts.append("")
+            fragments[IMPACT] = [
+                "⚡ <b>التأثير على الأسواق:</b>",
+                _esc(market_impact),
+                "",
+            ]
 
-        # Affected assets — each tagged with its own currency/commodity/equity
-        # icon. Given its own header line (💼), matching every other section's
-        # icon+bold-label-then-content pattern, instead of the previous
-        # inline "label: content" on one line — consistency of hierarchy and
-        # better mobile wrapping when 3-4 assets are present (final editorial
-        # polish, NEWSROOM_DNA.md §11). Deduplicated and capped at 4 (§19:
-        # "never a long shopping list") as a defensive floor under the
-        # prompt's own 3-4-asset discipline — the formatter must not trust
-        # the AI output blindly on this. Only shown from importance 3 upward
-        # (§15).
+        # Affected assets — deduplicated, capped at 4, importance ≥ 3 only.
         assets = ai_data.get("affected_assets", [])
         if show_optional_sections and assets and isinstance(assets, list):
             seen: set[str] = set()
@@ -285,15 +312,10 @@ class TelegramFormatter:
             deduped = deduped[:4]
             if deduped:
                 tagged = "  •  ".join(f"{_asset_icon(a)} {_esc(a)}" for a in deduped)
-                parts.append("💼 <b>الأصول المتأثرة:</b>")
-                parts.append(tagged)
-                parts.append("")
+                fragments[ASSETS] = ["💼 <b>الأصول المتأثرة:</b>", tagged, ""]
 
-        # What to watch next — optional, only from importance 3 upward (§15),
-        # and only when it names a concrete next development. Known
-        # zero-information boilerplate is omitted entirely rather than
-        # rendered under a section heading (see _is_generic_watch_filler —
-        # a deterministic backstop; the prompt owns the real quality rule).
+        # What to watch — concrete next development only, importance ≥ 3,
+        # generic-filler backstop applies.
         what_to_watch = ai_data.get("what_to_watch_ar", "")
         if (
             show_optional_sections
@@ -301,9 +323,16 @@ class TelegramFormatter:
             and not _is_empty(what_to_watch)
             and not _is_generic_watch_filler(what_to_watch)
         ):
-            parts.append("👀 <b>ما يجب مراقبته:</b>")
-            parts.append(_esc(what_to_watch))
-            parts.append("")
+            fragments[WATCH] = [
+                "👀 <b>ما يجب مراقبته:</b>",
+                _esc(what_to_watch),
+                "",
+            ]
+
+        # Assemble the body in the editorial mode's hierarchy. Modes reorder
+        # existing gated sections; they never add, remove, or un-gate one.
+        for section in plan.section_order:
+            parts.extend(fragments.get(section, ()))
 
         # No separate "key takeaway" section: summary_ar and headline_ar both ask
         # for a one-sentence takeaway, so rendering both reads as the same point
