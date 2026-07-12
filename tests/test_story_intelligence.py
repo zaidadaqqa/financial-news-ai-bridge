@@ -383,3 +383,26 @@ async def test_engine_iran_diplomacy_pair_matches() -> None:
         assert d1 is not None and d2 is not None
         assert d2.story_id == d1.story_id
         assert d2.relationship == RelationshipType.UPDATE
+
+
+def test_plural_singular_tokens_match_live_false_negative_pair() -> None:
+    """Real live false negative (2026-07-12, first hour on air): these two
+    naturally-arriving UAE headlines split into two stories because
+    'missile'/'missiles' and exact-token matching missed each other. The
+    plural-normalization rule must link them."""
+    live_1 = "UAE: Air defense systems currently countering missile threat"
+    live_2 = "UAE: Air defences engaging missiles, drones from Iran - defence ministry"
+    story = _story_from(live_1)
+    intel = classify_news(live_2)
+    score, reasons = score_candidate(story, intel, salient_tokens(live_2))
+    assert score >= MATCH_THRESHOLD, (score, reasons)
+
+
+def test_plural_normalization_is_conservative() -> None:
+    from app.services.story.rules import _normalize_token
+
+    assert _normalize_token("missiles") == "missile"
+    assert _normalize_token("systems") == "system"
+    assert _normalize_token("news") == "news"  # len 4 — untouched
+    assert _normalize_token("gas") == "gas"
+    assert _normalize_token("class") == "class"  # 'ss' — untouched

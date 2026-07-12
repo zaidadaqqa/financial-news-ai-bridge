@@ -12,12 +12,28 @@ import re
 from app.models.story import Story
 from app.services.intelligence.models import NewsIntelligenceResult
 
+
+def _normalize_token(token: str) -> str:
+    """Light deterministic plural normalization — real live false negative
+    (2026-07-12, first hour on air): "missile threat" vs "missiles, drones"
+    failed to token-match, splitting one UAE air-defence story in two.
+    Newswire English flips singular/plural constantly, so this is systemic,
+    not a headline patch. Rule kept deliberately naive and safe: strip one
+    trailing 's' from tokens of length ≥ 5 not ending in 'ss' ("missiles"→
+    "missile", "systems"→"system"; "news"/"gas"/"class" untouched)."""
+    if len(token) >= 5 and token.endswith("s") and not token.endswith("ss"):
+        return token[:-1]
+    return token
+
+
 # Generic tokens carry no story identity: function words, newswire verbs,
 # calendar terms, and market generics that co-occur across unrelated
 # headlines. Everything else is "salient". Kept deliberately compact — if a
 # false link ever traces to one generic word, add that word here with a
-# comment, never a headline-specific patch.
-GENERIC_TOKENS = frozenset("""
+# comment, never a headline-specific patch. The set is normalized with the
+# same plural rule used on headline tokens, so either form of a listed word
+# is excluded consistently.
+_GENERIC_TOKENS_RAW = frozenset("""
 the a an and or of to in on for with as at by from into over after before
 amid is are was were be been has have had will would could should may might
 says said say reports report reported new more most latest update news
@@ -35,6 +51,8 @@ according sources source statement announcement announces announced
 official officials
 """.split())
 
+GENERIC_TOKENS = frozenset(_normalize_token(w) for w in _GENERIC_TOKENS_RAW)
+
 _TOKEN_RE = re.compile(r"[a-z][a-z0-9'&.-]{2,}")
 
 # Explicit correction markers only (§7). "Revised" is deliberately absent —
@@ -45,7 +63,13 @@ _CORRECTION_RE = re.compile(r"\bcorrection:|\b(?:corrects|clarifies|retracts?)\b
 
 def salient_tokens(headline: str) -> set[str]:
     tokens = set(_TOKEN_RE.findall(headline.lower()))
-    return {t.strip(".-'&") for t in tokens if t not in GENERIC_TOKENS and len(t) >= 3}
+    return {
+        normalized
+        for t in tokens
+        if len(t) >= 3
+        for normalized in (_normalize_token(t.strip(".-'&")),)
+        if normalized not in GENERIC_TOKENS and normalized
+    }
 
 
 def has_correction_marker(headline: str) -> bool:
