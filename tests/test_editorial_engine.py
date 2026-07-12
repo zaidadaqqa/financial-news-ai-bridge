@@ -190,7 +190,7 @@ def test_verdict_rendered_for_real_forecast_miss() -> None:
     intel = classify_news(headline)
     ai = _ai(actual="-0.3%", forecast="-0.2%", previous="-0.1%")
     rendered = TelegramFormatter.format_premium_bilingual(_news(), ai, intel)
-    assert "<b>النتيجة:</b> أدنى من التوقعات" in rendered
+    assert "<b>النتيجة: أدنى من التوقعات</b>" in rendered
 
 
 def test_verdict_match_wording() -> None:
@@ -198,7 +198,7 @@ def test_verdict_match_wording() -> None:
     intel = classify_news(headline)
     ai = _ai(actual="65.0%", forecast="65%", previous="65.0%")
     rendered = TelegramFormatter.format_premium_bilingual(_news(), ai, intel)
-    assert "<b>النتيجة:</b> مطابقة للتوقعات" in rendered
+    assert "<b>النتيجة: مطابقة للتوقعات</b>" in rendered
 
 
 def test_no_verdict_without_forecast() -> None:
@@ -225,7 +225,10 @@ def test_economic_data_mode_leads_with_numbers() -> None:
     intel = classify_news(headline)
     ai = _ai(actual="-0.3%", forecast="-0.2%", previous="-0.1%")
     rendered = TelegramFormatter.format_premium_bilingual(_news(), ai, intel)
-    assert rendered.index("البيانات الاقتصادية") < rendered.index("شرح تجريبي")
+    # Data-first mode renders the rows WITHOUT the section header — the rows
+    # label themselves and the headline icon already said 📊.
+    assert "البيانات الاقتصادية" not in rendered
+    assert rendered.index("الفعلي") < rendered.index("شرح تجريبي")
 
 
 def test_story_update_mode_promotes_context_before_data() -> None:
@@ -235,7 +238,7 @@ def test_story_update_mode_promotes_context_before_data() -> None:
         _news(), ai, intel, _update_story()
     )
     explanation = rendered.index("شرح تجريبي")
-    context = rendered.index("السياق")
+    context = rendered.index("تطور سابق")
     data = rendered.index("البيانات الاقتصادية")
     impact = rendered.index("التأثير على الأسواق")
     assert explanation < context < data < impact

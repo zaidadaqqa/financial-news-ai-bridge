@@ -249,7 +249,7 @@ class TelegramFormatter:
             and show_interpretation
         ):
             fragments[CONTEXT] = [
-                "🔗 <b>السياق:</b>",
+                "🔗 <b>تطور سابق:</b>",
                 _esc(story.prior_headline_ar),
                 "",
             ]
@@ -263,11 +263,11 @@ class TelegramFormatter:
 
         data_rows = []
         if not _is_empty(actual):
-            data_rows.append(f"  <b>الفعلي:</b> {_esc(str(actual))}")
+            data_rows.append(f"<b>الفعلي:</b> {_esc(str(actual))}")
         if not _is_empty(forecast):
-            data_rows.append(f"  <b>المتوقع:</b> {_esc(str(forecast))}")
+            data_rows.append(f"<b>المتوقع:</b> {_esc(str(forecast))}")
         if not _is_empty(previous):
-            data_rows.append(f"  <b>السابق:</b> {_esc(str(previous))}")
+            data_rows.append(f"<b>السابق:</b> {_esc(str(previous))}")
 
         # Deterministic verdict (Editorial DNA upgrade): rendered from the
         # intelligence engine's Decimal-validated comparison, ONLY when a real
@@ -284,10 +284,14 @@ class TelegramFormatter:
         ):
             verdict = _SURPRISE_VERDICTS_AR.get(intelligence.surprise_direction)
             if verdict:
-                data_rows.append(f"  <b>النتيجة:</b> {verdict}")
+                data_rows.append(f"<b>النتيجة: {verdict}</b>")
 
         if data_rows:
-            fragments[DATA] = ["📊 <b>البيانات الاقتصادية:</b>", *data_rows, ""]
+            data_leads = bool(plan.section_order) and plan.section_order[0] == DATA
+            if data_leads:
+                fragments[DATA] = [*data_rows, ""]
+            else:
+                fragments[DATA] = ["📊 <b>البيانات الاقتصادية:</b>", *data_rows, ""]
 
         # Market impact — interpretation, importance ≥ 2 only.
         market_impact = ai_data.get("market_impact_ar", "")
@@ -370,7 +374,7 @@ class TelegramFormatter:
         # edit runs) — the latter drifts from the real event time by however long
         # AI processing took, which is exactly the kind of time confusion to avoid.
         event_time = news.created_at or datetime.now(UTC)
-        time_str = event_time.strftime("%Y-%m-%d %H:%M UTC")
+        time_str = event_time.strftime("%H:%M UTC")
         parts.append(f"المصدر: {_esc(source)} · {_esc(time_str)}")
 
         return "\n".join(parts)

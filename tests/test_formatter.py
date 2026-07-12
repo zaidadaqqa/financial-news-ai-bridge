@@ -141,7 +141,7 @@ def test_economic_data_table_appears_before_market_impact() -> None:
         category="economic_data", actual="65.0%", forecast="65%", previous="65.0%"
     )
     rendered = TelegramFormatter.format_premium_bilingual(news, ai_data, intelligence)
-    data_pos = rendered.index("البيانات الاقتصادية")
+    data_pos = rendered.index("الفعلي")  # data-first mode: rows, no header
     impact_pos = rendered.index("التأثير على الأسواق")
     assert data_pos < impact_pos
 
@@ -478,7 +478,7 @@ def test_story_context_shown_for_update() -> None:
     rendered = TelegramFormatter.format_premium_bilingual(
         _news(), _ai(importance=3), None, _story_decision()
     )
-    assert "🔗 <b>السياق:</b>" in rendered
+    assert "🔗 <b>تطور سابق:</b>" in rendered
     assert "الفيدرالي يخفض الفائدة بمقدار 25 نقطة أساس" in rendered
 
 
@@ -490,7 +490,7 @@ def test_story_context_placed_after_explanation_before_data() -> None:
         _story_decision(),
     )
     explanation_pos = rendered.index("شرح تجريبي لما حدث.")
-    context_pos = rendered.index("السياق")
+    context_pos = rendered.index("تطور سابق")
     data_pos = rendered.index("البيانات الاقتصادية")
     impact_pos = rendered.index("التأثير على الأسواق")
     assert explanation_pos < context_pos < data_pos < impact_pos
@@ -503,7 +503,7 @@ def test_story_context_hidden_for_new_story() -> None:
         None,
         _story_decision(relationship=RelationshipType.NEW_STORY, prior_ar=None),
     )
-    assert "السياق" not in rendered
+    assert "تطور سابق" not in rendered
 
 
 def test_story_context_hidden_for_repetition() -> None:
@@ -513,21 +513,21 @@ def test_story_context_hidden_for_repetition() -> None:
         None,
         _story_decision(relationship=RelationshipType.REPETITION),
     )
-    assert "السياق" not in rendered
+    assert "تطور سابق" not in rendered
 
 
 def test_story_context_hidden_without_published_prior() -> None:
     rendered = TelegramFormatter.format_premium_bilingual(
         _news(), _ai(importance=3), None, _story_decision(prior_ar=None)
     )
-    assert "السياق" not in rendered
+    assert "تطور سابق" not in rendered
 
 
 def test_story_context_hidden_at_importance_1() -> None:
     rendered = TelegramFormatter.format_premium_bilingual(
         _news(), _ai(importance=1), None, _story_decision()
     )
-    assert "السياق" not in rendered
+    assert "تطور سابق" not in rendered
 
 
 def test_story_context_never_leaks_internal_metadata() -> None:
