@@ -13,6 +13,8 @@ from app.repositories.news_repository import NewsRepository
 from app.services.ai.openai_provider import OpenAIProvider
 from app.services.formatting.telegram_formatter import TelegramFormatter
 from app.services.intelligence.engine import classify_news
+from app.services.story.engine import StoryIntelligenceEngine
+from app.services.story.models import StoryDecision
 from app.services.telegram.publisher import TelegramPublisher
 from app.services.validation.validator import OutputValidator
 from app.utils.hashing import generate_news_hash
@@ -29,6 +31,7 @@ class NewsOrchestrator:
         self.news_repo = NewsRepository(session)
         self.publisher = TelegramPublisher()
         self.ai_provider = OpenAIProvider()
+        self.story_engine = StoryIntelligenceEngine(session)
 
     async def process_message(
         self,
@@ -133,8 +136,24 @@ class NewsOrchestrator:
                 reasons=intelligence.classification_reasons,
             )
 
+            # Story Intelligence (Phase 3) — strictly background, isolated:
+            # a failure here logs one warning and the item proceeds exactly
+            # as Phase 2 with no story context. It can never mark the item
+            # FAILED and never touches the already-sent initial message.
+            # See STORY_INTELLIGENCE_ARCHITECTURE.md §9/§14.
+            story_decision: StoryDecision | None = None
+            try:
+                story_decision = await self.story_engine.process(news, intelligence)
+            except Exception as story_err:
+                await self.session.rollback()
+                logger.warning(
+                    "Story intelligence failed, continuing without story context",
+                    news_id=news.id[:8],
+                    error_type=type(story_err).__name__,
+                )
+
             ai_data = await self.ai_provider.generate_financial_translation(
-                news.normalized_headline, intelligence
+                news.normalized_headline, intelligence, story_decision
             )
 
             OutputValidator.validate_ai_output(news.normalized_headline, ai_data)
@@ -169,12 +188,26 @@ class NewsOrchestrator:
 
             if news.telegram_message_id:
                 final_text = TelegramFormatter.format_premium_bilingual(
-                    news, ai_data, intelligence
+                    news, ai_data, intelligence, story_decision
                 )
                 await self.publisher.edit_message(news.telegram_message_id, final_text)
 
                 news.status = NewsStatus.PUBLISHED
                 await self.news_repo.commit()
+
+                # Promote this item to its story's latest published
+                # development — the prior-context for the next related item.
+                # Isolated: failure logs a warning, the item stays PUBLISHED.
+                if story_decision is not None:
+                    try:
+                        await self.story_engine.record_published(story_decision, news)
+                    except Exception as story_err:
+                        await self.session.rollback()
+                        logger.warning(
+                            "Story publish-record failed",
+                            news_id=news.id[:8],
+                            error_type=type(story_err).__name__,
+                        )
 
             logger.info(
                 "Successfully processed and published news", news_id=news.id[:8]

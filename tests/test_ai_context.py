@@ -3,6 +3,7 @@ request (Phase 2.2 hardening, §D). Inspects the actual outbound request
 payload built by OpenAIProvider — never makes a real network call (the
 httpx client's .post is mocked)."""
 
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -11,6 +12,7 @@ import pytest
 from app.services.ai.openai_provider import OpenAIProvider
 from app.services.intelligence.engine import classify_news
 from app.services.intelligence.models import SAFE_FALLBACK
+from app.services.story.models import RelationshipType, StoryDecision
 
 MOCK_AI_RESPONSE_JSON = (
     '{"headline_ar": "x", "explanation_ar": "x", "market_impact_ar": "x", '
@@ -149,3 +151,124 @@ def test_internal_field_names_not_expected_in_rendered_output() -> None:
 
     source = inspect.getsource(telegram_formatter)
     assert "APPLICATION CONTEXT" not in source
+
+
+# ---------------------------------------------------------------------------
+# Story context block (Phase 3)
+# ---------------------------------------------------------------------------
+
+
+def _story(
+    relationship: RelationshipType = RelationshipType.UPDATE,
+    prior: str = "Fed cuts rates by 25bp",
+) -> StoryDecision:
+    return StoryDecision(
+        story_id="abc-123-story-id",
+        relationship=relationship,
+        is_new_story=relationship == RelationshipType.NEW_STORY,
+        evidence_score=6,
+        matching_reasons=("central_bank:FED:+3", "category:+1"),
+        prior_original_headline=prior,
+        prior_headline_ar="الفيدرالي يخفض الفائدة",
+        prior_at=datetime(2026, 7, 12, 1, 30, tzinfo=UTC),
+    )
+
+
+@pytest.mark.asyncio
+async def test_story_context_present_for_update(provider: OpenAIProvider) -> None:
+    intelligence = classify_news("Fed chair explains surprise rate decision")
+    payload = await _call_and_capture_payload_with_story(
+        provider, "Fed chair explains surprise rate decision", intelligence, _story()
+    )
+    user_content = payload["messages"][1]["content"]
+    assert "previous_development" in user_content
+    assert "Fed cuts rates by 25bp" in user_content
+    assert "update to" in user_content
+
+
+@pytest.mark.asyncio
+async def test_story_context_absent_for_new_story(provider: OpenAIProvider) -> None:
+    intelligence = classify_news("Fed chair explains surprise rate decision")
+    story = StoryDecision(
+        story_id="xyz",
+        relationship=RelationshipType.NEW_STORY,
+        is_new_story=True,
+        evidence_score=0,
+        matching_reasons=("new_story",),
+        prior_original_headline=None,
+        prior_headline_ar=None,
+        prior_at=None,
+    )
+    payload = await _call_and_capture_payload_with_story(
+        provider, "Fed chair explains surprise rate decision", intelligence, story
+    )
+    user_content = payload["messages"][1]["content"]
+    assert "previous_development" not in user_content
+    assert "story_status" not in user_content
+
+
+@pytest.mark.asyncio
+async def test_story_context_absent_for_repetition(provider: OpenAIProvider) -> None:
+    intelligence = classify_news("Fed chair explains surprise rate decision")
+    payload = await _call_and_capture_payload_with_story(
+        provider,
+        "Fed chair explains surprise rate decision",
+        intelligence,
+        _story(relationship=RelationshipType.REPETITION),
+    )
+    assert "previous_development" not in payload["messages"][1]["content"]
+
+
+@pytest.mark.asyncio
+async def test_story_context_no_internal_leakage(provider: OpenAIProvider) -> None:
+    intelligence = classify_news("Fed chair explains surprise rate decision")
+    payload = await _call_and_capture_payload_with_story(
+        provider, "Fed chair explains surprise rate decision", intelligence, _story()
+    )
+    user_content = payload["messages"][1]["content"]
+    assert "abc-123-story-id" not in user_content  # no story ID
+    assert "evidence" not in user_content.lower()  # no scores
+    assert "+3" not in user_content  # no matching reasons
+    assert "RelationshipType." not in user_content  # no enum repr
+    assert "StoryDecision(" not in user_content  # no dataclass repr
+
+
+@pytest.mark.asyncio
+async def test_story_context_works_even_with_fallback_intelligence(
+    provider: OpenAIProvider,
+) -> None:
+    # A token-matched story on a low-signal item: story context must still
+    # reach the model, under the standard context header.
+    payload = await _call_and_capture_payload_with_story(
+        provider, "Some low signal follow-up item", SAFE_FALLBACK, _story()
+    )
+    user_content = payload["messages"][1]["content"]
+    assert "APPLICATION CONTEXT" in user_content
+    assert "previous_development" in user_content
+    assert "category:" not in user_content  # no fabricated intelligence lines
+
+
+@pytest.mark.asyncio
+async def test_story_context_forbids_invented_history_and_market_reaction(
+    provider: OpenAIProvider,
+) -> None:
+    intelligence = classify_news("Fed chair explains surprise rate decision")
+    payload = await _call_and_capture_payload_with_story(
+        provider, "Fed chair explains surprise rate decision", intelligence, _story()
+    )
+    content = payload["messages"][1]["content"].lower()
+    assert "do not invent any story history" in content
+    assert "market reaction" in content
+
+
+async def _call_and_capture_payload_with_story(
+    provider: OpenAIProvider, headline: str, intelligence: object, story: object
+) -> dict[str, Any]:
+    with patch.object(
+        provider.client,
+        "post",
+        AsyncMock(return_value=_mock_httpx_response(MOCK_AI_RESPONSE_JSON)),
+    ) as post_mock:
+        await provider.generate_financial_translation(headline, intelligence, story)  # type: ignore[arg-type]
+    payload: dict[str, Any] = post_mock.call_args.kwargs["json"]
+    return payload

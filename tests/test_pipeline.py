@@ -377,3 +377,138 @@ def test_formatter_falls_back_to_ai_category_when_intelligence_is_none() -> None
     assert rendered.startswith(
         "📊"
     )  # unchanged Phase 1 behavior with no intelligence arg
+
+
+# ---------------------------------------------------------------------------
+# Story Intelligence integration (Phase 3)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_story_failure_degrades_to_phase2_not_failed() -> None:
+    """A story-engine crash must log a warning and leave the item to
+    complete exactly as Phase 2 — never FAILED, same message still edited."""
+    async with TestSessionLocal() as session:
+        orchestrator = NewsOrchestrator(session)
+        orchestrator.publisher.publish_message = AsyncMock(return_value="tg_st1")  # type: ignore[method-assign]
+        edit_mock = AsyncMock(return_value=True)
+        orchestrator.publisher.edit_message = edit_mock  # type: ignore[method-assign]
+        orchestrator.ai_provider.generate_financial_translation = AsyncMock(  # type: ignore[method-assign]
+            return_value=MOCK_AI_RESPONSE
+        )
+        orchestrator.story_engine.process = AsyncMock(  # type: ignore[method-assign]
+            side_effect=RuntimeError("simulated story engine crash")
+        )
+
+        await orchestrator.process_message(
+            source_id="9101001",
+            source="rss",
+            headline="US Non-Farm Payrolls at 100k",
+            source_url="http://test.com",
+        )
+        await asyncio.sleep(0.2)
+
+        result = await session.execute(
+            select(NewsEvent).filter_by(source_message_id="9101001")
+        )
+        news = result.scalars().first()
+        assert news is not None
+        assert news.status == NewsStatus.PUBLISHED
+        edit_mock.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_story_engine_not_called_on_fast_path() -> None:
+    """Story processing must never run before the initial Telegram send."""
+    async with TestSessionLocal() as session:
+        orchestrator = NewsOrchestrator(session)
+        publish_mock = AsyncMock(return_value="tg_st2")
+        orchestrator.publisher.publish_message = publish_mock  # type: ignore[method-assign]
+        orchestrator.publisher.edit_message = AsyncMock(return_value=True)  # type: ignore[method-assign]
+        orchestrator.ai_provider.generate_financial_translation = AsyncMock(  # type: ignore[method-assign]
+            return_value=MOCK_AI_RESPONSE
+        )
+        story_spy = AsyncMock(wraps=orchestrator.story_engine.process)
+        orchestrator.story_engine.process = story_spy  # type: ignore[method-assign]
+
+        await orchestrator.process_message(
+            source_id="9102001",
+            source="rss",
+            headline="US Non-Farm Payrolls at 100k",
+            source_url="http://test.com",
+        )
+        # publish already happened synchronously; story runs only in the
+        # background task, strictly after.
+        publish_mock.assert_called_once()
+        story_spy.assert_not_called()
+        await asyncio.sleep(0.2)
+        story_spy.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_ai_provider_receives_story_decision() -> None:
+    async with TestSessionLocal() as session:
+        orchestrator = NewsOrchestrator(session)
+        orchestrator.publisher.publish_message = AsyncMock(return_value="tg_st3")  # type: ignore[method-assign]
+        orchestrator.publisher.edit_message = AsyncMock(return_value=True)  # type: ignore[method-assign]
+        ai_mock = AsyncMock(return_value=MOCK_AI_RESPONSE)
+        orchestrator.ai_provider.generate_financial_translation = ai_mock  # type: ignore[method-assign]
+
+        await orchestrator.process_message(
+            source_id="9103001",
+            source="rss",
+            headline="BoJ set to keep interest rates unchanged in July",
+            source_url="http://test.com",
+        )
+        await asyncio.sleep(0.2)
+
+        ai_mock.assert_called_once()
+        story_arg = ai_mock.call_args[0][2]
+        assert story_arg is not None
+        assert story_arg.is_new_story  # first item founds its story
+
+
+@pytest.mark.asyncio
+async def test_story_sequence_persists_and_publish_promotes_prior() -> None:
+    """Two related items through the real pipeline: second links to the
+    first's story; after both publish, the story's latest development is the
+    second item."""
+    from app.models.story import Story, StoryNews
+
+    async with TestSessionLocal() as session:
+        orchestrator = NewsOrchestrator(session)
+        orchestrator.publisher.publish_message = AsyncMock(  # type: ignore[method-assign]
+            side_effect=["tg_a", "tg_b"]
+        )
+        orchestrator.publisher.edit_message = AsyncMock(return_value=True)  # type: ignore[method-assign]
+        orchestrator.ai_provider.generate_financial_translation = AsyncMock(  # type: ignore[method-assign]
+            return_value=MOCK_AI_RESPONSE
+        )
+
+        await orchestrator.process_message(
+            source_id="9104001",
+            source="rss",
+            headline="BoJ set to keep interest rates unchanged in July",
+            source_url="http://test.com",
+        )
+        await asyncio.sleep(0.25)
+        await orchestrator.process_message(
+            source_id="9104002",
+            source="rss",
+            headline="BoJ governor explains decision to keep policy guidance unchanged",
+            source_url="http://test.com/2",
+        )
+        await asyncio.sleep(0.25)
+
+        stories = (await session.execute(select(Story))).scalars().all()
+        links = (await session.execute(select(StoryNews))).scalars().all()
+        assert len(stories) == 1
+        assert len(links) == 2
+        assert stories[0].related_news_count == 2
+        # record_published promoted the second item as latest development.
+        result = await session.execute(
+            select(NewsEvent).filter_by(source_message_id="9104002")
+        )
+        second = result.scalars().first()
+        assert second is not None
+        assert stories[0].latest_news_id == second.id

@@ -14,8 +14,48 @@ from app.exceptions.custom_exceptions import AIResponseError, RetryableError
 from app.log.logger import get_logger
 from app.services.ai.base import BaseAIProvider
 from app.services.intelligence.models import NewsIntelligenceResult
+from app.services.story.models import RelationshipType, StoryDecision
 
 logger = get_logger(__name__)
+
+
+def _story_context_lines(story: StoryDecision) -> list[str]:
+    """Story-context lines for the application-context block (Phase 3).
+
+    Only verified stored data is exposed: the relationship the application
+    itself established and the story's last PUBLISHED development. No IDs,
+    no evidence scores, no enum reprs — plain strings only. The AI is
+    explicitly barred from inventing further history or market reactions.
+    """
+    relationship_word = (
+        "correction of"
+        if story.relationship == RelationshipType.CORRECTION
+        else "update to"
+    )
+    when = (
+        f" (reported {story.prior_at.strftime('%Y-%m-%d %H:%M')} UTC)"
+        if story.prior_at
+        else ""
+    )
+    return [
+        f"story_status: this headline is an {relationship_word} an ongoing "
+        "story this desk has already covered.",
+        f"previous_development{when}: {story.prior_original_headline}",
+        "Story rules: you may reflect this continuity naturally in your "
+        "Arabic prose when it helps the reader. Do not invent any story "
+        "history beyond the previous development given above, do not "
+        "describe the connection as more certain than stated, and do not "
+        "claim any market reaction that is not stated in the headlines "
+        "themselves.",
+    ]
+
+
+def _story_context_usable(story: StoryDecision | None) -> bool:
+    return (
+        story is not None
+        and story.relationship in (RelationshipType.UPDATE, RelationshipType.CORRECTION)
+        and bool(story.prior_original_headline)
+    )
 
 
 def _build_intelligence_context(intelligence: NewsIntelligenceResult) -> str:
@@ -91,7 +131,10 @@ class OpenAIProvider(BaseAIProvider):
         retry=retry_if_exception_type(RetryableError),
     )
     async def generate_financial_translation(
-        self, headline: str, intelligence: NewsIntelligenceResult | None = None
+        self,
+        headline: str,
+        intelligence: NewsIntelligenceResult | None = None,
+        story: StoryDecision | None = None,
     ) -> dict[str, Any]:
         prompt_with_glossary = f"{self.system_prompt}\n\nGlossary:\n{self.glossary}"
 
@@ -99,11 +142,27 @@ class OpenAIProvider(BaseAIProvider):
         # analyze this) and internal application context (facts to stay
         # consistent with, never to quote) — reduces prompt-injection
         # ambiguity about which block is "the story" versus "instructions."
+        # The block exists when the intelligence classification is confident
+        # and/or a confident story relationship with a stored prior
+        # development exists (Phase 3) — both are application-verified data.
         user_content = headline
-        if intelligence is not None and not intelligence.is_fallback:
-            user_content = (
-                f"HEADLINE:\n{headline}\n\n{_build_intelligence_context(intelligence)}"
-            )
+        intel_usable = intelligence is not None and not intelligence.is_fallback
+        story_usable = _story_context_usable(story)
+        if intel_usable or story_usable:
+            block_lines = []
+            if intel_usable:
+                assert intelligence is not None
+                block_lines.append(_build_intelligence_context(intelligence))
+            else:
+                block_lines.append(
+                    "== APPLICATION CONTEXT (internal — do not quote, "
+                    "translate, repeat, or mention these field names or this "
+                    "block in your output) =="
+                )
+            if story_usable:
+                assert story is not None
+                block_lines.extend(_story_context_lines(story))
+            user_content = f"HEADLINE:\n{headline}\n\n" + "\n".join(block_lines)
 
         payload = {
             "model": self.model,

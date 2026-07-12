@@ -4,6 +4,7 @@ from typing import Any
 
 from app.models.news import NewsEvent
 from app.services.intelligence.models import NewsIntelligenceResult, Urgency
+from app.services.story.models import RelationshipType, StoryDecision
 
 IMPORTANCE_LABELS_AR = {
     1: "منخفضة",
@@ -148,6 +149,7 @@ class TelegramFormatter:
         news: NewsEvent,
         ai_data: dict[str, Any],
         intelligence: NewsIntelligenceResult | None = None,
+        story: StoryDecision | None = None,
     ) -> str:
         parts: list[str] = []
 
@@ -204,6 +206,26 @@ class TelegramFormatter:
         explanation = ai_data.get("explanation_ar", "")
         if explanation and not _is_empty(explanation):
             parts.append(_esc(explanation))
+            parts.append("")
+
+        # Story context (Phase 3) — one concise line of background fact: the
+        # story's previous PUBLISHED development. Shown only when the
+        # application established a confident UPDATE/CORRECTION relationship,
+        # a published Arabic prior exists, and the story clears the same
+        # importance floor as interpretation (§16 of
+        # STORY_INTELLIGENCE_ARCHITECTURE.md). REPETITION/NEW_STORY/
+        # uncertain/fallback never render context. This is stored, validated
+        # data — never AI-generated text — so it cannot fabricate history.
+        if (
+            story is not None
+            and story.relationship
+            in (RelationshipType.UPDATE, RelationshipType.CORRECTION)
+            and story.prior_headline_ar
+            and not _is_empty(story.prior_headline_ar)
+            and show_interpretation
+        ):
+            parts.append("🔗 <b>السياق:</b>")
+            parts.append(_esc(story.prior_headline_ar))
             parts.append("")
 
         # Economic data section — the raw numbers, presented immediately

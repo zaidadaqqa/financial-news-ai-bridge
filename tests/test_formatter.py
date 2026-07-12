@@ -4,6 +4,8 @@ commodities icon, importance-aware section gating, fact-before-interpretation
 ordering, compact source, and asset dedup/cap. No network, no DB, no
 Telegram calls."""
 
+from datetime import UTC, datetime
+
 from app.constants.enums import NewsCategory
 from app.models.news import NewsEvent
 from app.services.formatting.telegram_formatter import (
@@ -11,6 +13,7 @@ from app.services.formatting.telegram_formatter import (
     TelegramFormatter,
 )
 from app.services.intelligence.engine import classify_news
+from app.services.story.models import RelationshipType, StoryDecision
 
 BASE_AI = {
     "headline_ar": "عنوان تجريبي",
@@ -448,3 +451,111 @@ def test_no_internal_debug_fields_ever_rendered() -> None:
     ]
     for token in forbidden:
         assert token not in rendered
+
+
+# ---------------------------------------------------------------------------
+# Story context section (Phase 3) — frozen layout + gated optional section
+# ---------------------------------------------------------------------------
+
+
+def _story_decision(
+    relationship: RelationshipType = RelationshipType.UPDATE,
+    prior_ar: str | None = "الفيدرالي يخفض الفائدة بمقدار 25 نقطة أساس",
+) -> StoryDecision:
+    return StoryDecision(
+        story_id="story-abc-id",
+        relationship=relationship,
+        is_new_story=relationship == RelationshipType.NEW_STORY,
+        evidence_score=6,
+        matching_reasons=("central_bank:FED:+3",),
+        prior_original_headline="Fed cuts rates by 25bp",
+        prior_headline_ar=prior_ar,
+        prior_at=datetime(2026, 7, 12, 1, 30, tzinfo=UTC),
+    )
+
+
+def test_story_context_shown_for_update() -> None:
+    rendered = TelegramFormatter.format_premium_bilingual(
+        _news(), _ai(importance=3), None, _story_decision()
+    )
+    assert "🔗 <b>السياق:</b>" in rendered
+    assert "الفيدرالي يخفض الفائدة بمقدار 25 نقطة أساس" in rendered
+
+
+def test_story_context_placed_after_explanation_before_data() -> None:
+    rendered = TelegramFormatter.format_premium_bilingual(
+        _news(),
+        _ai(importance=3, actual="2.5%", forecast="2.4%", previous="2.3%"),
+        None,
+        _story_decision(),
+    )
+    explanation_pos = rendered.index("شرح تجريبي لما حدث.")
+    context_pos = rendered.index("السياق")
+    data_pos = rendered.index("البيانات الاقتصادية")
+    impact_pos = rendered.index("التأثير على الأسواق")
+    assert explanation_pos < context_pos < data_pos < impact_pos
+
+
+def test_story_context_hidden_for_new_story() -> None:
+    rendered = TelegramFormatter.format_premium_bilingual(
+        _news(),
+        _ai(importance=3),
+        None,
+        _story_decision(relationship=RelationshipType.NEW_STORY, prior_ar=None),
+    )
+    assert "السياق" not in rendered
+
+
+def test_story_context_hidden_for_repetition() -> None:
+    rendered = TelegramFormatter.format_premium_bilingual(
+        _news(),
+        _ai(importance=3),
+        None,
+        _story_decision(relationship=RelationshipType.REPETITION),
+    )
+    assert "السياق" not in rendered
+
+
+def test_story_context_hidden_without_published_prior() -> None:
+    rendered = TelegramFormatter.format_premium_bilingual(
+        _news(), _ai(importance=3), None, _story_decision(prior_ar=None)
+    )
+    assert "السياق" not in rendered
+
+
+def test_story_context_hidden_at_importance_1() -> None:
+    rendered = TelegramFormatter.format_premium_bilingual(
+        _news(), _ai(importance=1), None, _story_decision()
+    )
+    assert "السياق" not in rendered
+
+
+def test_story_context_never_leaks_internal_metadata() -> None:
+    rendered = TelegramFormatter.format_premium_bilingual(
+        _news(), _ai(importance=3), None, _story_decision()
+    )
+    assert "story-abc-id" not in rendered
+    assert "UPDATE" not in rendered
+    assert "+3" not in rendered
+    assert "evidence" not in rendered.lower()
+
+
+def test_story_context_is_html_escaped() -> None:
+    rendered = TelegramFormatter.format_premium_bilingual(
+        _news(),
+        _ai(importance=3),
+        None,
+        _story_decision(prior_ar='<script>alert(1)</script> & "quoted"'),
+    )
+    assert "<script>" not in rendered
+    assert "&lt;script&gt;" in rendered
+
+
+def test_frozen_layout_unchanged_without_story() -> None:
+    # Phase 2 output with story=None must be byte-identical to the frozen
+    # layout — the parameter's absence is exact Phase 2 behavior.
+    a = TelegramFormatter.format_premium_bilingual(_news(), _ai(importance=3), None)
+    b = TelegramFormatter.format_premium_bilingual(
+        _news(), _ai(importance=3), None, None
+    )
+    assert a == b
