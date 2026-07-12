@@ -12,6 +12,7 @@ from app.models.news import NewsEvent
 from app.repositories.news_repository import NewsRepository
 from app.services.ai.openai_provider import OpenAIProvider
 from app.services.formatting.telegram_formatter import TelegramFormatter
+from app.services.indicators.engine import IndicatorMemoryEngine
 from app.services.intelligence.engine import classify_news
 from app.services.story.engine import StoryIntelligenceEngine
 from app.services.story.models import StoryDecision
@@ -32,6 +33,7 @@ class NewsOrchestrator:
         self.publisher = TelegramPublisher()
         self.ai_provider = OpenAIProvider()
         self.story_engine = StoryIntelligenceEngine(session)
+        self.indicator_memory = IndicatorMemoryEngine(session)
 
     async def process_message(
         self,
@@ -150,6 +152,20 @@ class NewsOrchestrator:
                     "Story intelligence failed, continuing without story context",
                     news_id=news.id[:8],
                     error_type=type(story_err).__name__,
+                )
+
+            # Indicator Memory (Phase 4A) — completely dark: silently
+            # accumulates the platform's historical database of economic
+            # prints. Writes only; influences nothing. Isolated: failure
+            # logs one warning and the item proceeds identically.
+            try:
+                await self.indicator_memory.record(news, intelligence)
+            except Exception as ind_err:
+                await self.session.rollback()
+                logger.warning(
+                    "Indicator memory failed, continuing",
+                    news_id=news.id[:8],
+                    error_type=type(ind_err).__name__,
                 )
 
             ai_data = await self.ai_provider.generate_financial_translation(
