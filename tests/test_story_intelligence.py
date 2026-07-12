@@ -406,3 +406,17 @@ def test_plural_normalization_is_conservative() -> None:
     assert _normalize_token("news") == "news"  # len 4 — untouched
     assert _normalize_token("gas") == "gas"
     assert _normalize_token("class") == "class"  # 'ss' — untouched
+
+
+def test_stored_tokens_renormalized_at_comparison_time() -> None:
+    """A story persisted with unnormalized (plural) tokens — e.g. created
+    under an older rule version — must still match a normalized item."""
+    story = _story_from("UAE: Air defense systems currently countering missile threat")
+    # Simulate old stored form: force plural/unnormalized tokens.
+    story.anchor_tokens = ["uae", "air", "defense", "systems", "missiles", "threat"]
+    story.latest_tokens = list(story.anchor_tokens)
+    live_2 = "UAE: Air defences engaging missiles, drones from Iran - defence ministry"
+    score, reasons = score_candidate(
+        story, classify_news(live_2), salient_tokens(live_2)
+    )
+    assert score >= MATCH_THRESHOLD, (score, reasons)

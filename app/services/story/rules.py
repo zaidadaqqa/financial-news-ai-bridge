@@ -121,7 +121,12 @@ def score_candidate(
     if intelligence.economic_event:
         effective_tokens = item_tokens - {intelligence.economic_event.lower()}
 
-    story_tokens = set(story.anchor_tokens) | set(story.latest_tokens)
+    # Stored token sets are re-normalized at comparison time so stories
+    # persisted under an older normalization rule (or none) keep matching —
+    # the comparison never trusts the stored form.
+    story_tokens = {
+        _normalize_token(t) for t in (*story.anchor_tokens, *story.latest_tokens)
+    }
     shared = story_tokens & effective_tokens
     if shared:
         pts = min(len(shared), 4)
@@ -144,7 +149,11 @@ def score_candidate(
 def repetition_overlap(item_tokens: set[str], latest_tokens: set[str]) -> float:
     """Share of the smaller token set that overlaps the story's latest item —
     at/above REPETITION_OVERLAP_RATIO the item is the same information
-    reworded."""
+    reworded. Stored tokens re-normalized at comparison time (see
+    score_candidate)."""
     if not item_tokens or not latest_tokens:
         return 0.0
-    return len(item_tokens & latest_tokens) / min(len(item_tokens), len(latest_tokens))
+    normalized_latest = {_normalize_token(t) for t in latest_tokens}
+    return len(item_tokens & normalized_latest) / min(
+        len(item_tokens), len(normalized_latest)
+    )
