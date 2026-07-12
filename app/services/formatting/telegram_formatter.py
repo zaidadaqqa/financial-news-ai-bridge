@@ -275,10 +275,15 @@ class TelegramFormatter:
         # comparison succeeded. Numeric fact only ("above forecast") — never
         # a market-direction judgment; that stays in the AI's impact section,
         # clearly framed as analysis.
+        # Gated on NUMERIC confidence only: the engine's forecast extraction
+        # and Decimal comparison are deterministic and valid regardless of
+        # whether the CATEGORY classification fell back (real production
+        # case: a WASDE cotton print with perfect numbers but no category
+        # keywords). surprise==UNKNOWN — the comparison's own honesty flag —
+        # renders nothing.
         if (
             data_rows
             and intelligence is not None
-            and not intelligence.is_fallback
             and intelligence.forecast is not None
             and not _is_empty(forecast)
         ):

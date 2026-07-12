@@ -276,3 +276,16 @@ def test_all_modes_share_the_visual_dna_skeleton() -> None:
         assert rendered.count(SEPARATOR) == 1
         assert rendered.count(FOOTER_SEPARATOR) == 1
         assert "المصدر: F.J." in rendered
+
+
+def test_verdict_shown_for_numerically_confident_fallback_item() -> None:
+    """Real production record (WASDE cotton): category classification falls
+    back (no keywords) but the numeric extraction and comparison are fully
+    valid — the verdict must render. Numeric confidence, not category
+    confidence, gates the verdict."""
+    headline = "WASDE Cotton End Stocks Actual 4.1M (Forecast 3.75M, Previous 3.7M)"
+    intel = classify_news(headline)
+    assert intel.is_fallback  # precondition: category signal absent
+    ai = _ai(actual="4.1M", forecast="3.75M", previous="3.7M", category="commodities")
+    rendered = TelegramFormatter.format_premium_bilingual(_news(), ai, intel)
+    assert "<b>النتيجة: أعلى من التوقعات</b>" in rendered
