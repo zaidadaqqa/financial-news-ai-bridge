@@ -1,294 +1,193 @@
 # Financial News AI Bridge
 
-A production-grade service that polls the FinancialJuice RSS feed, processes financial news with AI, and publishes professional Arabic translations and market analysis to a Telegram channel — running continuously on Oracle Cloud Always Free.
+An Arabic financial-news intelligence platform. It ingests FinancialJuice headlines in real
+time, understands them with deterministic engines (classification, story linkage, economic
+history), uses AI strictly for Arabic newsroom prose, and publishes premium bilingual messages
+to a Telegram channel — running 24/7 as a single lightweight service.
+
+**The problem it solves:** Arabic-speaking traders and financial professionals have no newsroom
+that covers global markets the way Bloomberg or Reuters covers them for English readers — fast,
+accurate, and written by a desk that understands markets. Machine translation alone adds latency
+and zero insight. This platform is a newsroom, not a translator: facts before interpretation,
+numbers validated before publishing, silence over invention.
 
 ## Architecture
 
-```
-FinancialJuice RSS
-       │  poll every 30s
-       ▼
-  RSS Poller ──► Deduplication (SQLite) ──► Telegram (initial English)
-                                         ──► OpenAI GPT-4o-mini (Arabic + analysis)
-                                         ──► Telegram (edit with Arabic version)
+```mermaid
+flowchart TD
+    RSS[FinancialJuice RSS] -->|poll| P[RSS Poller<br/>3-layer dedup, cold-start protection]
+    P -->|new item| O[Orchestrator]
+    O -->|"fast path (seconds)"| T1[Telegram: initial English message]
+    O --> B[Background stage]
+    B --> NI[News Intelligence<br/>deterministic classification]
+    NI --> SI[Story Intelligence<br/>persistent story matching]
+    SI --> IM[Indicator Memory<br/>canonical economic-print history]
+    IM --> MC[Macro Context<br/>deterministic streaks & extremes]
+    MC --> AI[GPT-4o-mini<br/>Arabic prose only]
+    AI --> V[Validator<br/>schema + number preservation]
+    V --> EE[Editorial Engine<br/>12 deterministic modes, one frozen DNA]
+    EE --> T2[Telegram: edit same message<br/>premium Arabic layout]
 ```
 
-**Processing pipeline:**
-1. Poll RSS feed every 30 seconds with ETag/Last-Modified caching
-2. Filter already-seen GUIDs (in-memory set seeded from DB on startup)
-3. Cold-start protection: on empty DB, silently mark existing items as seen
-4. Store news record (status: `RECEIVED`)
-5. Send initial English headline to Telegram
-6. Call OpenAI with structured JSON schema for Arabic translation + analysis
-7. Validate AI output (required fields, number preservation)
-8. Edit the Telegram message with the Arabic version
-9. Mark record as `PUBLISHED`
+The **fast path never waits for intelligence**: the raw headline reaches subscribers in seconds,
+then the same message is edited in place once analysis is ready. Every enrichment stage is
+isolated — a failure in any of them degrades to the previous stage's behavior and can never
+block publication.
 
-## Technology Stack
+## What makes it different
+
+### Deterministic core, AI at the edge
+
+The application — not the model — owns every operational fact:
+
+| Decided deterministically (never by AI) | Decided by AI (language only) |
+|---|---|
+| Category, urgency, breaking status | Arabic headline & explanation prose |
+| Country / currency / central bank / economic event | Financial interpretation (clearly framed as analysis) |
+| Actual vs. forecast comparison (Decimal, unit-aware) | "What to watch" wording |
+| Story identity & update/correction relationships | Weaving provided context into prose |
+| Economic-print history, streaks, recorded extremes | |
+| Message layout, icons, sections, hierarchy | |
+
+The AI receives verified facts as authoritative context and is explicitly forbidden from
+inventing history, numbers, or market reactions. Validation rejects any output that drops or
+alters a number from the source headline.
+
+### News Intelligence (deterministic classification)
+
+Weighted-evidence engine with hard overrides and safe fallback: category, urgency, geography,
+central banks, economic events, and Decimal-validated forecast surprises — computed locally in
+microseconds, with word-boundary-safe vocabularies. When confident, it is authoritative; when
+not, it says so instead of guessing.
+
+### Story Intelligence (persistent memory of events)
+
+Stories and their developments survive restarts in the database. New items are matched with
+conservative weighted evidence (entities, events, geography, time windows) — a related story is
+never assumed to be a duplicate, uncertainty never links, and regional bursts don't merge into
+mega-stories. Confirmed updates render a «تطور سابق» context section built from the story's
+last *published* development only.
+
+### Indicator Memory + Macro Context (proprietary economic history)
+
+Every validated economic print is stored under a canonical, wording-independent series identity
+(`country | event | variant | unit-class`). Prints that can't be keyed with certainty are stored
+honestly unkeyed — never guessed, never merged. On top of that history, a deterministic reader
+computes forecast streaks, value streaks, within-our-records extremes, and revision links — with
+minimum-evidence gates (≥3 prints for any streak claim, ≥6 for extremes) so the platform never
+overclaims what its records can't support. "Highest since 2011"-style wording is structurally
+forbidden until the records actually span it.
+
+### Editorial Engine (one frozen visual DNA)
+
+Twelve deterministic editorial modes (breaking, story update, economic data, central bank, …)
+share one frozen message skeleton — modes may only set a badge, force the 🚨 icon, or reorder
+gated sections. Semantic emoji registry, importance-aware length, data-before-interpretation,
+and an honest verdict line («النتيجة: أعلى من التوقعات») rendered only when a real Decimal
+comparison succeeded. The reader never sees internal metadata, confidence scores, or AI seams.
+
+### Sample message (illustrative values)
+
+```
+📊 التضخم في منطقة اليورو يتباطأ إلى 2.4% في يونيو
+
+─────────────────────
+أظهرت البيانات الأولية تباطؤ التضخم السنوي في منطقة اليورو إلى 2.4%،
+متماشيًا مع توقعات الأسواق.
+
+الفعلي: 2.4%
+المتوقع: 2.4%
+السابق: 2.6%
+النتيجة: مطابقة للتوقعات
+
+⚡ التأثير على الأسواق:
+يعزز هذا التباطؤ توقعات خفض الفائدة الأوروبية في الاجتماع المقبل.
+
+· · · · · · · · · ·
+محايد • الأهمية: مهمة
+المصدر: F.J. · 09:00 UTC
+```
+
+## Reliability engineering
+
+- **Send-then-edit**: one notification per item; enrichment never delays delivery.
+- **Three-layer duplicate prevention**: in-memory GUID set (DB-seeded), a database unique
+  constraint, and SHA-256 content hashing.
+- **Restart-safe everything**: stories, indicator history, and feed state persist; systemd
+  restarts cannot double-publish or double-record (database-enforced idempotency).
+- **Failure isolation**: every intelligence stage has its own try/except; a crash in story
+  matching, indicator writing, or macro reading logs one warning and the item publishes
+  normally.
+- **Additive migrations only**, rehearsed on production-copy databases (upgrade → downgrade →
+  re-upgrade with row-count verification) before every deploy.
+- **Observability**: structured JSON logs (with HTTP-client logging suppressed so tokens can
+  never leak), a `/health` endpoint, daily database backups, and `scripts/ops_report.py` — a
+  one-command read-only operational snapshot.
+
+## Technology
 
 | Component | Technology |
 |-----------|------------|
-| Runtime | Python 3.12 |
-| Web framework | FastAPI + Uvicorn |
-| News source | FinancialJuice RSS (free, no auth) |
-| Telegram client | httpx (direct Bot API) |
-| AI provider | OpenAI GPT-4o-mini |
-| Database | SQLite + aiosqlite |
-| ORM | SQLAlchemy 2.0 (async) |
-| Migrations | Alembic (auto-run at startup) |
-| Retries | tenacity (exponential backoff) |
-| Logging | structlog (JSON) |
-| Deployment | Docker Compose on Oracle Cloud Always Free |
+| Runtime | Python 3.12, single async process (FastAPI + Uvicorn) |
+| Ingestion | FinancialJuice RSS |
+| AI | OpenAI GPT-4o-mini via httpx (JSON mode, temperature 0.1) |
+| Storage | SQLite + SQLAlchemy 2.0 async + Alembic |
+| Delivery | Telegram Bot API (HTML parse mode) |
+| Quality | pytest (228 tests) · ruff · black · mypy · GitHub Actions CI |
+| Deployment | systemd service on a 1 GB cloud VM (~60 MB RSS in production) |
 
-## Environment Variables
+## Testing & CI
 
-Copy `.env.example` to `.env` and fill in your values.
+228 tests cover the pipeline end-to-end with mocked I/O: classification vocabularies against
+real production headlines, story-matching evidence rules, canonical series identity, macro-gate
+honesty (insufficient history must yield *nothing*), failure isolation (each stage crashed on
+purpose), formatter freeze guarantees (byte-identical output when dark subsystems fail), and
+migration round-trips. CI runs formatting, linting, typing, the full suite, a migration
+up/down/up check, and a Docker build on every push.
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `FJ_RSS_URL` | No | FinancialJuice RSS URL (default: official feed) |
-| `RSS_POLL_INTERVAL` | No | Seconds between polls (default: 30) |
-| `TELEGRAM_BOT_TOKEN` | Yes | Telegram bot token from @BotFather |
-| `TELEGRAM_CHAT_ID` | Yes | Target channel/group (e.g. `@mychannel`) |
-| `TELEGRAM_THREAD_ID` | No | Thread/topic ID for supergroups |
-| `AI_PROVIDER` | No | `openai` (default) |
-| `AI_MODEL` | No | `gpt-4o-mini` (default) |
-| `AI_API_KEY` | Yes | OpenAI API key |
-| `AI_BASE_URL` | No | Override for OpenAI-compatible endpoint |
-| `DATABASE_URL` | No | `sqlite+aiosqlite:///data/news.db` (default) |
-| `APP_ENV` | No | `production` |
-| `LOG_LEVEL` | No | `INFO` (default) |
-| `PORT` | No | `8000` (default) |
-
-## Local Setup
+## Local development
 
 ```bash
-git clone https://github.com/zaidadaqqa/financial-news-ai-bridge.git
-cd financial-news-ai-bridge
-
-python3.12 -m venv .venv
-source .venv/bin/activate
+python3.12 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-
-cp .env.example .env
-# Edit .env with your TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, AI_API_KEY
-
-python -m app.main
+cp .env.example .env          # fill with your own test credentials
+pytest                        # full suite, no network needed
+python -m uvicorn app.main:app --port 8000
 ```
 
-## Docker (local)
+`.env.example` documents every variable. A Docker Compose path also exists
+(`docker compose up -d --build`) for containerized runs. Operational procedures (deploy,
+rollback, backups, incident response) live in [docs/RUNBOOKS.md](docs/RUNBOOKS.md).
 
-```bash
-cp .env.example .env
-# Edit .env with your credentials
+## Deployment model
 
-docker compose up -d --build
-docker compose logs -f ai-bridge
+Production runs as a hardened systemd unit on a small cloud VM: `Restart=always`, secrets via
+`EnvironmentFile` (never in git — see [SECURITY.md](SECURITY.md)), the health endpoint bound to
+localhost only, and the database on persistent disk with daily backups. Deploys are a single
+reviewed script: backup → fetch exact commit → migrate → restart, with a documented rollback
+path. CI must be green before any deploy.
 
-# Health check
-curl http://localhost:8000/health
-```
+## Roadmap
 
-The SQLite database is stored in the `db_data` Docker volume and survives container restarts.
+- **Live now**: the full pipeline above (Phases 1–4B).
+- **Accumulating**: indicator-history depth — macro context lines begin appearing naturally as
+  weekly/monthly series reach their evidence gates.
+- **Designed, awaiting data review**: narrative intelligence (cross-story themes) and a
+  deterministic significance engine.
+- **Externally gated**: verified market-reaction context (e.g., "gold moved X% in the hour
+  after this print") — requires a licensed intraday market-data provider; the platform will not
+  claim market moves it cannot verify, so this ships only when a trusted source is funded.
 
-## Cloud Deployment: Oracle Cloud Always Free
+## Limitations (documented honestly)
 
-This service runs permanently on Oracle Cloud Always Free (ARM Ampere A1 instance).
-No credit card charges — the Always Free tier is permanently free.
+- Economic-history claims are bounded by the platform's own recorded span — it will not assert
+  multi-year records it hasn't witnessed.
+- Country/event vocabularies are conservative: unrecognized indicators (e.g., some smaller
+  economies, agricultural reports) are stored unkeyed rather than guessed.
+- No market-price data yet (see Roadmap) — market-impact prose is expectation analysis, clearly
+  framed as such, never a claimed reaction.
+- Single channel, Arabic-first by design.
 
-### Why Oracle Cloud
+## License
 
-| Platform | Free Worker | Persistent Storage | 24/7 | Verdict |
-|----------|-------------|-------------------|------|---------|
-| Oracle Cloud Always Free | Yes (full VM) | 200 GB block storage | Yes | **Best** |
-| Google Cloud e2-micro | Yes (full VM) | 30 GB disk | Yes | Backup |
-| Fly.io | No free tier (2026) | — | — | No |
-| Render | Workers not free | — | Sleeps | No |
-| Railway | Trial only ($5) | — | — | No |
-| Koyeb | Workers excluded | — | Sleeps | No |
-
-Oracle Always Free specs (as of June 2026): 2 OCPU + 12 GB RAM, 200 GB block storage.
-
-### First-Time VM Setup
-
-**Step 1 — Create Oracle Cloud account**
-- Go to [cloud.oracle.com/free](https://cloud.oracle.com/free)
-- Credit card required for identity verification (not charged on Always Free)
-- Choose Frankfurt (`eu-frankfurt-1`) or Singapore (`ap-singapore-1`) for best ARM availability
-- Select "Always Free" during signup
-
-**Step 2 — Provision ARM VM**
-- Compute → Instances → Create Instance
-- Image: Ubuntu 22.04 (Canonical)
-- Shape: VM.Standard.A1.Flex → 2 OCPU, 12 GB RAM
-- Add your SSH public key
-- Create instance
-
-**Step 3 — SSH and run setup**
-```bash
-# SSH into the VM
-ssh ubuntu@<your-vm-ip>
-
-# Run setup script
-curl -fsSL https://raw.githubusercontent.com/zaidadaqqa/financial-news-ai-bridge/main/scripts/setup_oracle_vm.sh | bash
-```
-
-If Docker was just installed, log out and log back in, then run the script again.
-
-**Step 4 — Copy secrets to VM**
-```bash
-# From your local machine — NEVER put secrets in git
-scp .env ubuntu@<your-vm-ip>:/opt/financial-news-ai-bridge/.env
-```
-
-**Step 5 — Start the service**
-```bash
-# On the VM
-cd /opt/financial-news-ai-bridge
-docker compose up -d --build
-
-# Verify
-curl http://localhost:8000/health
-```
-
-Expected response:
-```json
-{
-  "status": "ok",
-  "service": "Financial News AI Bridge",
-  "uptime_seconds": "42",
-  "db_status": "ok",
-  "last_rss_poll": "never"
-}
-```
-
-After the first poll cycle (30 seconds), `last_rss_poll` shows a timestamp.
-
-### Automatic Updates
-
-After a git push to main, pull updates on the VM:
-
-```bash
-ssh ubuntu@<your-vm-ip> bash /opt/financial-news-ai-bridge/scripts/update_oracle.sh
-```
-
-Or enable automated deploys via GitHub Actions (optional):
-1. In GitHub → Settings → Variables: add `ORACLE_DEPLOY_ENABLED = true`
-2. In GitHub → Settings → Secrets: add `ORACLE_SSH_HOST`, `ORACLE_SSH_USER`, `ORACLE_SSH_KEY`
-3. Every push to `main` will automatically SSH into the VM and run the update script
-
-### Oracle Cloud Networking
-
-Oracle's VCN blocks all ports by default. Configure ingress rules:
-- VCN → Security Lists → Default Security List → Add Ingress Rule
-- Source CIDR: `0.0.0.0/0`, Protocol: TCP, Port: `22` (SSH)
-- Port 8000 is **not** exposed externally — health checks run from localhost only
-
-### Common Oracle Issues
-
-**"Out of host capacity" when creating ARM VM**
-- Switch to Frankfurt or Singapore region
-- Retry a few minutes later — capacity opens as other users release instances
-
-**Account signup rejected**
-- Use a physical credit card (not prepaid/virtual)
-- Try Frankfurt or Ashburn as your home region
-
-## Transition from Local Service
-
-Both the local systemd service and Oracle Cloud can run simultaneously — their SQLite databases are independent, and each will publish news to Telegram. To stop the local service after Oracle Cloud is verified:
-
-```bash
-systemctl --user stop financial-news-ai-bridge
-systemctl --user disable financial-news-ai-bridge
-```
-
-## Testing
-
-```bash
-pytest                  # Run all tests
-pytest -v               # Verbose output
-mypy app tests          # Type check
-black --check .         # Format check
-ruff check .            # Lint
-```
-
-## Folder Structure
-
-```
-financial-news-ai-bridge/
-├── app/
-│   ├── api/health.py              # /health endpoint (status, db, last poll)
-│   ├── config/settings.py         # Pydantic settings
-│   ├── database/connection.py     # Async SQLAlchemy engine
-│   ├── main.py                    # FastAPI app + lifespan
-│   ├── models/news.py             # SQLAlchemy models
-│   └── services/
-│       ├── ai/                    # OpenAI provider
-│       ├── ingestion/rss_poller.py # RSS polling + deduplication
-│       ├── formatting/            # Telegram HTML formatter
-│       ├── news/orchestrator.py   # Processing pipeline
-│       ├── telegram/              # Telegram publisher
-│       └── validation/            # AI output validator
-├── alembic/                       # Database migrations
-├── prompts/
-│   ├── translator.txt             # AI system prompt
-│   └── glossary.txt               # Financial Arabic glossary
-├── tests/
-├── scripts/
-│   ├── setup_oracle_vm.sh         # First-time Oracle Cloud VM setup
-│   ├── update_oracle.sh           # Pull updates on Oracle VM
-│   ├── backup_database.sh         # SQLite online backup
-│   └── restore_database.sh        # Restore from backup
-├── .env.example                   # Environment variable template
-├── Dockerfile                     # Multi-arch Python 3.12 image
-└── docker-compose.yml             # Compose with persistent volume
-```
-
-## Health Check
-
-`GET /health` returns:
-
-```json
-{
-  "status": "ok",
-  "service": "Financial News AI Bridge",
-  "uptime_seconds": "3600",
-  "db_status": "ok",
-  "last_rss_poll": "2026-07-10T12:00:00+00:00"
-}
-```
-
-## Security Notes
-
-- Never commit `.env` to version control (protected by `.gitignore`)
-- Never commit `data/news.db` (protected by `.gitignore`)
-- `.env.example` contains only placeholder values — no real credentials
-- Logs never output tokens, API keys, or sensitive response content
-- The Docker image does not copy `.env` into the image layer
-- Container runs as non-root user (`appuser`)
-
-## Logging
-
-Key log events:
-
-```
-RSS poller started           — startup successful
-RSS: initial scan complete   — cold-start protection set, no flood
-RSS poll: new items found    — items being processed
-Telegram message sent        — initial English message published
-Telegram message edited      — Arabic version published
-Duplicate news detected      — skipping already-seen item
-RSS: rate limited (429)      — 120s backoff applied
-```
-
-## Troubleshooting
-
-| Symptom | Likely Cause | Fix |
-|---------|-------------|-----|
-| `Telegram: chat not found` | Wrong `TELEGRAM_CHAT_ID` | Use numeric ID (`-100...`) or `@handle` |
-| `Missing required field` | AI response schema mismatch | Check `prompts/translator.txt` |
-| `Number X missing from AI output` | AI dropped a value | Record marked `AI_FAILED` automatically |
-| `RSS: rate limited (429)` | Too many requests | 120s backoff applied automatically |
-| `db_status: error` in /health | DB file permissions | Check `data/` directory ownership |
-| Port 8000 unreachable externally | Oracle VCN security list | Keep port 8000 localhost-only; access via SSH tunnel |
+MIT — see [LICENSE](LICENSE).

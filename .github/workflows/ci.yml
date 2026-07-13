@@ -54,5 +54,14 @@ jobs:
       - name: Test
         run: pytest
 
+      - name: Migration check (upgrade → downgrade → re-upgrade)
+        env:
+          DATABASE_URL: sqlite+aiosqlite:///./data/migration_check.db
+        run: |
+          mkdir -p data
+          python -m alembic upgrade head
+          python -m alembic downgrade -1
+          python -m alembic upgrade head
+
       - name: Build Docker image
         run: docker build -t financial-news-ai-bridge:ci .
