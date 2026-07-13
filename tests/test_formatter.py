@@ -258,15 +258,13 @@ def test_footer_source_line_is_light_but_explicit() -> None:
     assert "UTC" in rendered  # timestamp still present
 
 
-def test_footer_uses_lighter_rule_than_header() -> None:
-    from app.services.formatting.telegram_formatter import (
-        FOOTER_SEPARATOR,
-        SEPARATOR,
-    )
-
+def test_no_ruled_lines_anywhere() -> None:
+    """Separator-free DNA (2026-07-13, owner directive + 0/476 researched
+    messages using rules): no drawn horizontal line of any kind renders."""
     rendered = TelegramFormatter.format_premium_bilingual(_news(), _ai(), None)
-    assert rendered.count(SEPARATOR) == 1  # header/body boundary only
-    assert rendered.count(FOOTER_SEPARATOR) == 1  # footer boundary only
+    assert "─" not in rendered
+    assert "· · ·" not in rendered
+    assert "\n\n\n" not in rendered  # rhythm: never more than one blank line
 
 
 def test_footer_meta_without_bias_still_shows_importance() -> None:

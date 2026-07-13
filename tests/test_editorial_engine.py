@@ -190,7 +190,7 @@ def test_verdict_rendered_for_real_forecast_miss() -> None:
     intel = classify_news(headline)
     ai = _ai(actual="-0.3%", forecast="-0.2%", previous="-0.1%")
     rendered = TelegramFormatter.format_premium_bilingual(_news(), ai, intel)
-    assert "<b>النتيجة: أدنى من التوقعات</b>" in rendered
+    assert "<b>النتيجة: أدنى من التوقعات ▼</b>" in rendered
 
 
 def test_verdict_match_wording() -> None:
@@ -258,11 +258,6 @@ def test_canonical_mode_places_context_after_impact() -> None:
 
 
 def test_all_modes_share_the_visual_dna_skeleton() -> None:
-    from app.services.formatting.telegram_formatter import (
-        FOOTER_SEPARATOR,
-        SEPARATOR,
-    )
-
     for headline in (
         "Fed announces emergency surprise rate cut",
         "German CPI Final MoM Actual -0.3% (Forecast -0.2%, Previous -0.1%)",
@@ -273,8 +268,10 @@ def test_all_modes_share_the_visual_dna_skeleton() -> None:
         rendered = TelegramFormatter.format_premium_bilingual(
             _news(), _ai(actual="-0.3%", forecast="-0.2%"), intel
         )
-        assert rendered.count(SEPARATOR) == 1
-        assert rendered.count(FOOTER_SEPARATOR) == 1
+        # Separator-free DNA: hierarchy from spacing, never drawn rules.
+        assert "─" not in rendered
+        assert "· · ·" not in rendered
+        assert "\n\n\n" not in rendered
         assert "المصدر: F.J." in rendered
 
 
@@ -288,4 +285,4 @@ def test_verdict_shown_for_numerically_confident_fallback_item() -> None:
     assert intel.is_fallback  # precondition: category signal absent
     ai = _ai(actual="4.1M", forecast="3.75M", previous="3.7M", category="commodities")
     rendered = TelegramFormatter.format_premium_bilingual(_news(), ai, intel)
-    assert "<b>النتيجة: أعلى من التوقعات</b>" in rendered
+    assert "<b>النتيجة: أعلى من التوقعات ▲</b>" in rendered

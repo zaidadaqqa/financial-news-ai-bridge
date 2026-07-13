@@ -21,10 +21,12 @@ from app.services.story.models import RelationshipType, StoryDecision
 # Deterministic verdict vocabulary for the economic-data block: a numeric
 # fact about the print vs the forecast — never a good/bad judgment (that is
 # the AI's analysis, in its own clearly-framed section). UNKNOWN renders
-# nothing, ever.
+# nothing, ever. The trailing arrow is established market language for the
+# same numeric fact (2026-07-13 four-channel research: direction arrows are
+# one of the few cross-channel stable emoji meanings); MATCH carries none.
 _SURPRISE_VERDICTS_AR = {
-    NumericSurprise.HIGHER: "أعلى من التوقعات",
-    NumericSurprise.LOWER: "أدنى من التوقعات",
+    NumericSurprise.HIGHER: "أعلى من التوقعات ▲",
+    NumericSurprise.LOWER: "أدنى من التوقعات ▼",
     NumericSurprise.MATCH: "مطابقة للتوقعات",
 }
 
@@ -84,12 +86,52 @@ ASSET_ICON_RULES: list[tuple[str, str]] = [
     ("CAD", "🇨🇦"),
 ]
 
-SEPARATOR = "─────────────────────"
-# Lighter, shorter rule for the footer only — the header/body boundary is a
-# structural divider (keeps the full SEPARATOR); the footer boundary is a
-# closing signature, not a new section, so it reads as visually lighter
-# (final editorial polish, .claude_memory/NEWSROOM_DNA.md §11).
-FOOTER_SEPARATOR = "· · · · · · · · · ·"
+# Country flags — established market language (2026-07-13 four-channel
+# research: flags were the single strongest cross-channel semantic emoji,
+# 86 messages across 3 channels, meaning perfectly stable). Keyed on the
+# intelligence engine's canonical country names ONLY — no country detected
+# means no flag, never a guess. Rendered as a single trailing qualifier on
+# the hero line (the leading primary icon stays alone and singular).
+COUNTRY_FLAGS = {
+    "United States": "🇺🇸",
+    "United Kingdom": "🇬🇧",
+    "Germany": "🇩🇪",
+    "France": "🇫🇷",
+    "Italy": "🇮🇹",
+    "Spain": "🇪🇸",
+    "Netherlands": "🇳🇱",
+    "Canada": "🇨🇦",
+    "Japan": "🇯🇵",
+    "China": "🇨🇳",
+    "Australia": "🇦🇺",
+    "Switzerland": "🇨🇭",
+    "New Zealand": "🇳🇿",
+    "Norway": "🇳🇴",
+}
+
+# The complete approved emoji registry (NEWSROOM_DNA §13, 2026-07-13
+# separator-free DNA). Every emoji a rendered message may contain lives
+# here; tests enforce that nothing outside it ever renders. Meanings are
+# fixed — no random substitution, no stacking of primary icons.
+APPROVED_EMOJIS = frozenset(
+    {
+        "🚨",  # breaking (sole primary when urgent)
+        *CATEGORY_ICONS.values(),
+        "🥇",  # gold (dynamic commodities / asset line)
+        "💵",  # USD asset
+        "💶",  # EUR asset
+        "📈",  # default equity/index asset icon (asset line only)
+        "⚡",  # market impact section
+        "🔗",  # story context section
+        "👀",  # what-to-watch section
+        "💼",  # affected assets section
+        "▲",  # above forecast / positive bias direction
+        "▼",  # below forecast / negative bias direction
+        "📡",  # initial raw message header
+        "⏳",  # initial raw message pending marker
+        *COUNTRY_FLAGS.values(),
+    }
+)
 
 
 def _esc(text: str | None) -> str:
@@ -216,13 +258,21 @@ class TelegramFormatter:
             else:
                 icon = _category_icon(category, ai_data.get("affected_assets"))
             badge = f"{plan.badge} | " if plan.badge else ""
-            parts.append(f"{icon} <b>{badge}{_esc(headline_ar)}</b>")
-            # Breathing room before the divider so the headline reads as the
-            # message's hero element rather than crowding straight into the
-            # rule below it (final editorial polish, NEWSROOM_DNA.md §11).
+            # One trailing country flag when the intelligence engine detected
+            # a canonical country — a qualifier suffix, never a second
+            # primary icon (the leading slot stays singular, 🚨 included).
+            flag = (
+                COUNTRY_FLAGS.get(intelligence.country or "")
+                if intelligence is not None
+                else None
+            )
+            flag_suffix = f" {flag}" if flag else ""
+            parts.append(f"{icon} <b>{badge}{_esc(headline_ar)}</b>{flag_suffix}")
+            # One blank line of breathing room — in the separator-free DNA
+            # (2026-07-13: zero of 476 researched messages used ruled lines;
+            # owner directive) hierarchy comes from spacing, bold labels, and
+            # the semantic emoji registry, never from drawn rules.
             parts.append("")
-
-        parts.append(SEPARATOR)
 
         # ------------------------------------------------------------------
         # Build each section as an independent fragment; the editorial mode's
@@ -347,14 +397,14 @@ class TelegramFormatter:
         # for a one-sentence takeaway, so rendering both reads as the same point
         # said twice. The headline already carries that role in the message.
 
-        # Footer (final Phase 2 polish) — a quiet editorial signature, not a
-        # data section. The direction value (محايد / إيجابي ▲ / سلبي ▼) is
-        # self-explanatory, so its "الاتجاه:" field label was dropped; the
-        # importance value is an adjective that needs its label, so
-        # "الأهمية:" stays. Joined with a light bullet instead of a heavy
-        # pipe. Omitted entirely for importance-1 items per §15's
-        # "very short" spec.
-        parts.append(FOOTER_SEPARATOR)
+        # Footer — a quiet editorial signature, not a data section. The
+        # direction value (محايد / إيجابي ▲ / سلبي ▼) is self-explanatory, so
+        # its "الاتجاه:" field label was dropped; the importance value is an
+        # adjective that needs its label, so "الأهمية:" stays. Joined with a
+        # light bullet instead of a heavy pipe. Meta line omitted entirely
+        # for importance-1 items per §15's "very short" spec. No dotted rule
+        # above it (separator-free DNA): the preceding section's blank line
+        # is the boundary.
         if show_interpretation:
             bias = ai_data.get("market_bias", "")
             bias_label = BIAS_LABELS_AR.get(str(bias).upper(), "")
