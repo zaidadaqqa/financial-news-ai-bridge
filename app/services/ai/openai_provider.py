@@ -13,10 +13,78 @@ from app.config.settings import settings
 from app.exceptions.custom_exceptions import AIResponseError, RetryableError
 from app.log.logger import get_logger
 from app.services.ai.base import BaseAIProvider
+from app.services.indicators.context import MAX_FACTS_IN_CONTEXT, MacroContext
 from app.services.intelligence.models import NewsIntelligenceResult
 from app.services.story.models import RelationshipType, StoryDecision
 
 logger = get_logger(__name__)
+
+
+def _ordinal(n: int) -> str:
+    if 10 <= n % 100 <= 20:
+        suffix = "th"
+    else:
+        suffix = {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suffix}"
+
+
+def _macro_context_lines(macro: MacroContext) -> list[str]:
+    """Macro-history lines for the application-context block (Phase 4B).
+
+    Every fact is deterministic, Decimal-computed, and gated by the reader's
+    minimum-history rules (see app.services.indicators.context). Wording is
+    within-our-records honest by construction; the AI may phrase these facts
+    but never extend them. No series IDs, no canonical keys, no counters —
+    plain sentences only. Hard cap: MAX_FACTS_IN_CONTEXT fact lines, chosen
+    by priority (revision > extreme > forecast streak > value streak >
+    prior print)."""
+    facts: list[str] = []
+    if macro.is_revision:
+        facts.append(
+            "macro_fact: this release is a revision of a print this desk "
+            "already recorded for the same indicator."
+        )
+    if macro.extreme:
+        facts.append(
+            f"macro_fact: this is the {macro.extreme} reading within this "
+            f"desk's own recorded history of this indicator "
+            f"({macro.history_count} prints since "
+            f"{macro.history_since:%Y-%m-%d})."
+        )
+    if macro.forecast_streak:
+        facts.append(
+            f"macro_fact: this is the {_ordinal(macro.forecast_streak)} "
+            f"consecutive print {macro.forecast_streak_direction} forecast "
+            "within our records."
+        )
+    if macro.value_streak:
+        facts.append(
+            f"macro_fact: the reading has {macro.value_streak_direction} "
+            f"for {macro.value_streak} consecutive recorded prints."
+        )
+    if macro.prior_actual_raw:
+        when = f" ({macro.prior_print_at:%Y-%m-%d})" if macro.prior_print_at else ""
+        facts.append(
+            "macro_fact: the previous print this desk recorded for this "
+            f"indicator was {macro.prior_actual_raw}{when}."
+        )
+    return [
+        "macro_history: the facts below come from this desk's own recorded "
+        "history of this exact indicator (same country, event, basis, and "
+        "unit). They are authoritative and complete — no other history "
+        "exists in our records.",
+        *facts[:MAX_FACTS_IN_CONTEXT],
+        "Macro rules: you may weave these facts into your Arabic prose only "
+        "where they genuinely help the reader. Phrase any extreme or streak "
+        "strictly as within this desk's records — never claim a longer "
+        "history (wording like 'the highest since 2011' is forbidden). Do "
+        "not compute, extend, or invent any further history, and do not "
+        "claim any market reaction.",
+    ]
+
+
+def _macro_context_usable(macro: MacroContext | None) -> bool:
+    return macro is not None and macro.has_facts
 
 
 def _story_context_lines(story: StoryDecision) -> list[str]:
@@ -135,6 +203,7 @@ class OpenAIProvider(BaseAIProvider):
         headline: str,
         intelligence: NewsIntelligenceResult | None = None,
         story: StoryDecision | None = None,
+        macro: MacroContext | None = None,
     ) -> dict[str, Any]:
         prompt_with_glossary = f"{self.system_prompt}\n\nGlossary:\n{self.glossary}"
 
@@ -144,11 +213,13 @@ class OpenAIProvider(BaseAIProvider):
         # ambiguity about which block is "the story" versus "instructions."
         # The block exists when the intelligence classification is confident
         # and/or a confident story relationship with a stored prior
-        # development exists (Phase 3) — both are application-verified data.
+        # development exists (Phase 3) and/or gated deterministic macro
+        # history exists (Phase 4B) — all application-verified data.
         user_content = headline
         intel_usable = intelligence is not None and not intelligence.is_fallback
         story_usable = _story_context_usable(story)
-        if intel_usable or story_usable:
+        macro_usable = _macro_context_usable(macro)
+        if intel_usable or story_usable or macro_usable:
             block_lines = []
             if intel_usable:
                 assert intelligence is not None
@@ -162,6 +233,9 @@ class OpenAIProvider(BaseAIProvider):
             if story_usable:
                 assert story is not None
                 block_lines.extend(_story_context_lines(story))
+            if macro_usable:
+                assert macro is not None
+                block_lines.extend(_macro_context_lines(macro))
             user_content = f"HEADLINE:\n{headline}\n\n" + "\n".join(block_lines)
 
         payload = {

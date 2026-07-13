@@ -298,26 +298,34 @@ async def test_dark_guarantee_output_identical_with_and_without_memory() -> None
     assert rendered[0] == rendered[1]
 
 
-async def test_ai_prompt_receives_no_indicator_context() -> None:
-    """Phase 4A: the AI request must be completely unaware that Indicator
-    Memory exists — no new argument, no new context lines."""
+async def test_ai_prompt_receives_no_raw_indicator_internals() -> None:
+    """Phase 4A wrote this guarantee as "the AI is completely unaware of
+    Indicator Memory". Phase 4B (owner-approved) supersedes it precisely:
+    the AI may receive the GATED MacroContext value object only — never the
+    writer, repository, parser, or any raw internals (series IDs, canonical
+    keys, quality counters, unkeyed reasons). This test enforces the new
+    boundary; tests/test_macro_context.py enforces the block's content."""
     import asyncio
     import inspect
     from unittest.mock import AsyncMock
 
-    from app.services.ai.openai_provider import OpenAIProvider
+    # Static: the provider consumes only the read-model module — it must
+    # never import the indicator engine, repository, or parser (no DB
+    # access, no raw rows, no keying logic inside the AI layer).
+    import app.services.ai.openai_provider as provider_module
     from app.services.news.orchestrator import NewsOrchestrator
     from tests.test_pipeline import MOCK_AI_RESPONSE
 
-    # Static: the provider's signature has no indicator parameter, and its
-    # module never imports indicator code.
-    sig = inspect.signature(OpenAIProvider.generate_financial_translation)
-    assert "indicator" not in " ".join(sig.parameters)
-    import app.services.ai.openai_provider as provider_module
+    source = inspect.getsource(provider_module)
+    assert "indicators.context" in source  # the one allowed import
+    assert "indicators.engine" not in source
+    assert "indicator_repository" not in source
+    assert "indicators.parser" not in source
+    assert "IndicatorPrint" not in source
+    assert "IndicatorSeries" not in source
 
-    assert "indicator" not in inspect.getsource(provider_module).lower()
-
-    # Dynamic: the orchestrator passes exactly the Phase 3 argument set.
+    # Dynamic: a series' FIRST print has no history — the orchestrator must
+    # pass macro=None and the request must look exactly like Phase 3/4A.
     async with TestSessionLocal() as session:
         orchestrator = NewsOrchestrator(session)
         orchestrator.publisher.publish_message = AsyncMock(return_value="tg_p")  # type: ignore[method-assign]
@@ -332,7 +340,9 @@ async def test_ai_prompt_receives_no_indicator_context() -> None:
         )
         await asyncio.sleep(0.2)
         ai_mock.assert_called_once()
-        assert len(ai_mock.call_args[0]) == 3  # headline, intelligence, story
+        args = ai_mock.call_args[0]
+        assert len(args) == 4  # headline, intelligence, story, macro
+        assert args[3] is None  # no history yet → no context, byte-identical
 
 
 async def test_quality_score_never_negative() -> None:

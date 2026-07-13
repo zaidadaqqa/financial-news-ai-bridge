@@ -20,6 +20,26 @@ class IndicatorRepository:
         )
         return result.scalars().first()
 
+    async def get_series_by_id(self, series_id: str) -> IndicatorSeries | None:
+        result = await self.session.execute(
+            select(IndicatorSeries).filter_by(id=series_id)
+        )
+        return result.scalars().first()
+
+    async def list_series_prints(self, series_id: str) -> list[IndicatorPrint]:
+        """All prints of one series in a stable chronological order — the
+        deterministic basis for every Macro Context computation."""
+        result = await self.session.execute(
+            select(IndicatorPrint)
+            .filter_by(series_id=series_id)
+            .order_by(
+                IndicatorPrint.print_at.asc(),
+                IndicatorPrint.created_at.asc(),
+                IndicatorPrint.id.asc(),
+            )
+        )
+        return list(result.scalars().all())
+
     async def latest_print(self, series_id: str) -> IndicatorPrint | None:
         result = await self.session.execute(
             select(IndicatorPrint)

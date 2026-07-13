@@ -12,6 +12,7 @@ from app.models.news import NewsEvent
 from app.repositories.news_repository import NewsRepository
 from app.services.ai.openai_provider import OpenAIProvider
 from app.services.formatting.telegram_formatter import TelegramFormatter
+from app.services.indicators.context import MacroContext, MacroContextReader
 from app.services.indicators.engine import IndicatorMemoryEngine
 from app.services.intelligence.engine import classify_news
 from app.services.story.engine import StoryIntelligenceEngine
@@ -34,6 +35,7 @@ class NewsOrchestrator:
         self.ai_provider = OpenAIProvider()
         self.story_engine = StoryIntelligenceEngine(session)
         self.indicator_memory = IndicatorMemoryEngine(session)
+        self.macro_reader = MacroContextReader(session)
 
     async def process_message(
         self,
@@ -168,8 +170,23 @@ class NewsOrchestrator:
                     error_type=type(ind_err).__name__,
                 )
 
+            # Macro Context (Phase 4B) — deterministic, read-only historical
+            # facts from Indicator Memory, handed to the AI as authoritative
+            # context. Isolated: any failure means no context and the item
+            # proceeds exactly as Phase 4A. Never touches the formatter.
+            macro_context: MacroContext | None = None
+            try:
+                macro_context = await self.macro_reader.read(news, intelligence)
+            except Exception as macro_err:
+                await self.session.rollback()
+                logger.warning(
+                    "Macro context failed, continuing without it",
+                    news_id=news.id[:8],
+                    error_type=type(macro_err).__name__,
+                )
+
             ai_data = await self.ai_provider.generate_financial_translation(
-                news.normalized_headline, intelligence, story_decision
+                news.normalized_headline, intelligence, story_decision, macro_context
             )
 
             OutputValidator.validate_ai_output(news.normalized_headline, ai_data)
