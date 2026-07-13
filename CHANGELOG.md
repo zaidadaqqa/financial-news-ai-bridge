@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.1.0] - 2026-07-14 — Evidence-based editorial DNA + pipeline robustness
+
+### Added
+- **Separator-free message design**: hierarchy from spacing, bold labels, and a frozen semantic
+  emoji registry — no ruled lines (grounded in a 476-message market study where zero messages
+  used them). Country flag as a deterministic hero-line qualifier; direction arrows on the
+  economic verdict line. A registry-lock regression test fails the build if any unregistered
+  character ever renders.
+- **Validator precision**: number preservation no longer misreads identifiers (`G10`), ordinals
+  (`21st`), or month-adjacent day ranges (`July 1-10`) as market figures — six real messages had
+  been lost to these false positives; genuine figures remain fully enforced.
+- **Arabic-output gate**: reader-facing fields are rejected if not actually Arabic (measured
+  threshold; ticker/acronym tolerant) — closes a real published-English-as-translation defect.
+- Norway added to the deterministic country vocabulary (recurring real indicator family).
+
+### Fixed
+- Telegram edit retries that hit "message is not modified" now count as delivered (they are),
+  restoring story-continuity eligibility for such items.
+- Persisted error strings are sanitized — request URLs and bot tokens can never reach the
+  database again; the one historical occurrence was scrubbed.
+
 ## [3.0.0] - 2026-07-13 — Intelligence platform
 
 ### Added
