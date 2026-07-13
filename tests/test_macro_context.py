@@ -110,10 +110,10 @@ async def test_no_context_without_a_recorded_print() -> None:
 
 
 async def test_no_context_for_unkeyed_print() -> None:
-    # Norway is honestly unkeyed (missing_country) — never used for context.
+    # WASDE is honestly unkeyed (missing_country) — never used for context.
     async with TestSessionLocal() as session:
         engine = IndicatorMemoryEngine(session)
-        headline = "Norwegian CPI YoY Actual 2.7% (Forecast 3.1%, Previous 3.1%)"
+        headline = "WASDE Cotton End Stocks Actual 4.1M (Forecast 3.75M, Previous 3.7M)"
         news, intel = await _add_print(session, engine, headline, "n1", BASE_AT)
         assert await MacroContextReader(session).read(news, intel) is None
 
@@ -618,7 +618,7 @@ async def test_backfill_counts_and_idempotency() -> None:
         await _insert_row(
             session,
             "b3",
-            "Norwegian CPI YoY Actual 2.7% (Forecast 3.1%, Previous 3.1%)",
+            "WASDE Cotton End Stocks Actual 4.1M (Forecast 3.75M, Previous 3.7M)",
             NewsStatus.PUBLISHED,
             BASE_AT + timedelta(days=31),
         )
@@ -640,7 +640,7 @@ async def test_backfill_counts_and_idempotency() -> None:
         report = await backfill_indicator_memory(session)
         assert report.scanned == 4  # FAILED row not scanned
         assert report.recorded_keyed == 2
-        assert report.recorded_unkeyed == 1  # Norway, honestly unkeyed
+        assert report.recorded_unkeyed == 1  # WASDE, honestly unkeyed
         assert report.skipped_no_actual == 1
         assert report.failed_items == 0
         assert report.first_created_at is not None

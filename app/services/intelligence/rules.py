@@ -306,6 +306,10 @@ COUNTRY_ADJECTIVES: dict[str, tuple[str, str]] = {
     r"\bAustralian\b": ("Australia", "AUD"),
     r"\bSwiss\b": ("Switzerland", "CHF"),
     r"\bNew Zealand\b": ("New Zealand", "NZD"),
+    # Added 2026-07-13 after real accumulation: recurring Norwegian CPI
+    # prints were the only honestly-unkeyed missing_country family in
+    # production Indicator Memory. Targeted addition, not broad expansion.
+    r"\bNorwegian\b": ("Norway", "NOK"),
 }
 _COUNTRY_PATTERNS = [(re.compile(p), val) for p, val in COUNTRY_ADJECTIVES.items()]
 

@@ -79,10 +79,10 @@ until they don't — a reader must never see the fields disagree:
 Return ONLY valid JSON matching this exact schema. No extra text, no markdown, no explanation:
 
 {
-  "headline_ar": "string — professional Arabic headline, 1 sentence, natural Arabic phrasing",
+  "headline_ar": "string — professional Arabic headline, 1 sentence, natural Arabic phrasing. ALWAYS entirely in Arabic — translate quoted remarks, chart names, and statement text; only tickers/acronyms (USD, CPI, BTC) may stay Latin",
   "explanation_ar": "string — 1-4 natural Arabic sentences explaining what happened and why it matters economically. Use the fewest that do the story justice — never pad to reach a length. Must be fully in Arabic. Must be understandable without the English original.",
   "market_impact_ar": "string — 1-3 sentences explaining the likely effect on financial markets, framed clearly as analysis. A single short sentence is correct when the story is genuinely low-impact. Fully in Arabic.",
-  "translation_ar": "string — complete professional Arabic translation of the original headline",
+  "translation_ar": "string — complete professional Arabic translation of the original headline. ALWAYS entirely in Arabic — never leave the English headline, a quote, or a chart title untranslated; only tickers/acronyms may stay Latin",
   "summary_ar": "string — one short Arabic sentence giving the key takeaway, distinct from headline_ar. Stored for internal use and not always shown to the reader alongside the headline, so it must stand on its own rather than repeat it.",
   "what_to_watch_ar": "string or null — one short Arabic sentence naming a concrete next thing to watch (upcoming data, event, or level). Null if there is genuinely nothing concrete to point to — never invent one.",
   "category": "string — one of: economic_data, central_bank, company, earnings, commodities, forex, bonds, crypto, geopolitical, government, breaking, general",

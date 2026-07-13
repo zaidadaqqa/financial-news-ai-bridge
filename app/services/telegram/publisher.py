@@ -79,6 +79,22 @@ class TelegramPublisher:
             if response.status_code == 429:
                 raise RetryableError("Telegram API Rate Limit (429)")
 
+            # Idempotent retry: if a network error struck AFTER Telegram
+            # applied a previous attempt, the retry sends identical text and
+            # Telegram answers 400 "message is not modified" — the edit IS
+            # delivered. Treating that as failure wrongly FAILED a delivered
+            # item in production (2026-07-13) and hid it from the
+            # published-priors story gate.
+            if (
+                response.status_code == 400
+                and "message is not modified" in response.text.lower()
+            ):
+                logger.info(
+                    "Telegram edit already applied (retry idempotence)",
+                    message_id=message_id,
+                )
+                return True
+
             response.raise_for_status()
             ok = bool(response.json().get("ok", False))
             if ok:

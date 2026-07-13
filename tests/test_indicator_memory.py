@@ -61,11 +61,19 @@ def test_identify_keyed_real_prints() -> None:
 
 
 def test_identify_unkeyed_honestly() -> None:
-    # Norway is not in the country table; WASDE has neither country nor event.
-    _, reason = identify_series(NORWEGIAN, classify_news(NORWEGIAN))
-    assert reason == "missing_country"
+    # WASDE has neither a country adjective nor a recognized event — it must
+    # stay honestly unkeyed (inferring "US" from the report name would be a
+    # semantic guess, rejected 2026-07-13).
     _, reason = identify_series(WASDE, classify_news(WASDE))
     assert reason == "missing_country"
+
+
+def test_norwegian_prints_key_after_vocabulary_addition() -> None:
+    # 2026-07-13: Norway added to the country table after real production
+    # accumulation showed recurring Norwegian CPI prints honestly unkeyed.
+    identity, reason = identify_series(NORWEGIAN, classify_news(NORWEGIAN))
+    assert reason is None and identity is not None
+    assert identity.canonical_key == "Norway|CPI|YOY-NONE-NONE|PERCENT"
 
 
 def test_canonical_key_is_wording_independent() -> None:

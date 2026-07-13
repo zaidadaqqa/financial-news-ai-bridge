@@ -1,4 +1,5 @@
 import asyncio
+import re
 from datetime import UTC, datetime
 
 from sqlalchemy import select
@@ -25,6 +26,20 @@ from app.utils.text import normalize_text
 logger = get_logger(__name__)
 
 MAX_RETRY_ATTEMPTS = 3
+
+_BOT_TOKEN_RE = re.compile(r"bot\d+:[A-Za-z0-9_-]+")
+_URL_RE = re.compile(r"https?://\S+")
+
+
+def _sanitize_error(exc: Exception) -> str:
+    """Error string safe to persist. httpx exceptions embed the full request
+    URL — for Telegram that URL contains the bot token (found leaked in one
+    production last_error row, 2026-07-13). Redact tokens and URLs before
+    anything reaches the database."""
+    text = f"{type(exc).__name__}: {str(exc)[:300]}"
+    text = _BOT_TOKEN_RE.sub("bot<redacted>", text)
+    text = _URL_RE.sub("<url>", text)
+    return text[:120]
 
 
 class NewsOrchestrator:
@@ -247,7 +262,7 @@ class NewsOrchestrator:
             )
 
         except (ValidationError, AIResponseError) as e:
-            safe_err = f"{type(e).__name__}: {str(e)[:120]}"
+            safe_err = _sanitize_error(e)
             logger.error(
                 "AI validation/generation failed",
                 news_id=news.id[:8],
@@ -260,7 +275,7 @@ class NewsOrchestrator:
             await self.news_repo.commit()
 
         except Exception as e:
-            safe_err = f"{type(e).__name__}: {str(e)[:120]}"
+            safe_err = _sanitize_error(e)
             logger.error(
                 "Unexpected error in background processing",
                 news_id=news.id[:8],
