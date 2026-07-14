@@ -3,8 +3,31 @@ from typing import Any
 
 from app.exceptions.custom_exceptions import ValidationError
 
-_NUMBER_RE = re.compile(r"-?\d+(?:\.\d+)?%?")
+# Comma-grouped thousands FIRST (longest-match): "2,090" must be one number.
+# Real production loss (2026-07-13): "Previous 2,090" fragmented into "2" +
+# "090" and the validator demanded a phantom "090" from the Arabic output.
+_NUMBER_RE = re.compile(r"-?\d{1,3}(?:,\d{3})+(?:\.\d+)?%?|-?\d+(?:\.\d+)?%?")
 _ORDINAL_SUFFIX_RE = re.compile(r"(?:st|nd|rd|th)\b", re.I)
+# Percent ranges like "1.5%-2.5%" / "5.25%–5.50%": the naive extraction's
+# second match carries the hyphen as a minus sign ("-2.5%"), so an AI that
+# rephrases the range naturally ("بين 1.5% و2.5%") was rejected for missing
+# a signed number that never existed (real production loss, 2026-07-13).
+# For these spans the REQUIRED tokens are the two unsigned endpoints —
+# which also hardens the check: a dropped or altered endpoint now fails
+# even when the source hyphen artifact would accidentally match.
+_PERCENT_RANGE_RE = re.compile(
+    r"(?<![\d.,-])(\d{1,3}(?:\.\d+)?%?)\s*[-–]\s*(\d{1,3}(?:\.\d+)?)%"
+)
+
+
+def _decommas(token: str) -> set[str]:
+    """Canonical membership forms of one matched number: with and without
+    the %, always comma-stripped (both sides of the comparison use this, so
+    '2,090' in the source matches '2090' or '2,090' in the Arabic)."""
+    plain = token.replace(",", "")
+    return {plain, plain.rstrip("%")}
+
+
 # Month-adjacent day ranges ("July 1-10", "July 6th-12th") are calendar
 # context, not market data. Production evidence (2026-07-12/13): four real
 # messages died on these — and because the validator only fails when BOTH
@@ -23,16 +46,18 @@ _MONTH_DAY_RANGE_RE = re.compile(
 
 
 def extract_numbers(text: str) -> set[str]:
-    """Extract all significant numbers from text including ranges and basis points."""
+    """Extract all significant numbers from text including ranges and basis
+    points. Comma-grouped thousands are one number, and every membership
+    form is comma-stripped so both comparison sides normalize identically."""
     if not text:
         return set()
-    matches = _NUMBER_RE.findall(text)
-    # Also extract both ends of ranges like 5.25%-5.50%
-    result = set()
-    for m in matches:
-        result.add(m)
-        # Strip % to get bare number for cross-checking
-        result.add(m.rstrip("%"))
+    result: set[str] = set()
+    for m in _NUMBER_RE.findall(text):
+        result.update(_decommas(m))
+        # Ranges rendered with a hyphen ("5.25%-5.50%") carry the hyphen as
+        # a sign on the second token — offer the unsigned form too, so an
+        # unsigned endpoint requirement matches either writing style.
+        result.update(_decommas(m.lstrip("-")))
     return {m for m in result if m not in ("", "-")}
 
 
@@ -45,26 +70,39 @@ def extract_required_numbers(text: str) -> set[str]:
       ("G10" demanded '10'),
     - ordinal-suffixed digits are grammar, not market data ("21st sanctions
       package" demanded '21'; Arabic spells ordinals out),
-    - month-adjacent day ranges are dates ("July 1-10" demanded '-10').
+    - month-adjacent day ranges are dates ("July 1-10" demanded '-10'),
+    - comma-grouped thousands are ONE number ("2,090" demanded a phantom
+      '090'), normalized comma-less on both comparison sides,
+    - percent ranges ("1.5%-2.5%") require their two UNSIGNED endpoints —
+      the hyphen is a range dash, not a minus, so a natural Arabic
+      rephrasing («بين 1.5% و2.5%») passes while a dropped or altered
+      endpoint still fails.
 
     Exemption means non-enforcement only — nothing is ever stripped from the
     AI output side. Genuine market figures (signed values, decimals,
-    percentages, numeric ranges like 5.25%-5.50%) remain fully protected:
-    none of the exemptions can match them."""
+    percentages) remain fully protected: none of the exemptions can match
+    them, and a range's endpoints stay individually mandatory."""
     if not text:
         return set()
-    range_spans = [m.span() for m in _MONTH_DAY_RANGE_RE.finditer(text)]
-    result = set()
+    day_range_spans = [m.span() for m in _MONTH_DAY_RANGE_RE.finditer(text)]
+    percent_ranges = list(_PERCENT_RANGE_RE.finditer(text))
+    percent_spans = [m.span() for m in percent_ranges]
+    result: set[str] = set()
     for m in _NUMBER_RE.finditer(text):
         start, end = m.span()
         if start > 0 and text[start - 1].isalpha():
             continue  # identifier like G10 / WAF6
         if _ORDINAL_SUFFIX_RE.match(text, end):
             continue  # ordinal like 21st
-        if any(rs <= start and end <= r_end for rs, r_end in range_spans):
+        if any(rs <= start and end <= r_end for rs, r_end in day_range_spans):
             continue  # day range like July 1-10
-        result.add(m.group())
-        result.add(m.group().rstrip("%"))
+        if any(rs <= start and end <= r_end for rs, r_end in percent_spans):
+            continue  # handled below as unsigned endpoints
+        result.update(_decommas(m.group()))
+    for m in percent_ranges:
+        low, high = m.group(1), m.group(2)
+        result.update(_decommas(low if low.endswith("%") else f"{low}%"))
+        result.update(_decommas(f"{high}%"))
     return {m for m in result if m not in ("", "-")}
 
 

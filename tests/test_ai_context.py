@@ -272,3 +272,48 @@ async def _call_and_capture_payload_with_story(
         await provider.generate_financial_translation(headline, intelligence, story)  # type: ignore[arg-type]
     payload: dict[str, Any] = post_mock.call_args.kwargs["json"]
     return payload
+
+
+# ---------------------------------------------------------------------------
+# Editorial prose discipline locks (2026-07-14): evidence-based prompt rules
+# — 40/200 sampled summaries opened with a generic frame-word, 26/200 leaned
+# on يشير إلى filler, 33/200 restated the headline. These tests lock the
+# discipline lines so a future prompt edit cannot silently drop them.
+# ---------------------------------------------------------------------------
+
+
+def _prompt_text() -> str:
+    with open("prompts/translator.txt", encoding="utf-8") as f:
+        return f.read()
+
+
+def test_prompt_bans_market_impact_filler_and_names_channels() -> None:
+    prompt = _prompt_text()
+    assert "TRANSMISSION CHANNEL" in prompt
+    assert "يراقب المستثمرون التطورات" in prompt  # listed as banned
+    assert "من المتوقع أن تتفاعل" in prompt
+
+
+def test_prompt_requires_direct_statement_attribution() -> None:
+    prompt = _prompt_text()
+    assert "generic frame-word" in prompt
+    assert "تصريحات" in prompt  # named as a banned opener
+
+
+def test_prompt_summary_leads_with_concrete_fact() -> None:
+    prompt = _prompt_text()
+    assert "never restate headline_ar in vaguer words" in prompt
+
+
+@pytest.mark.asyncio
+async def test_story_rules_include_connective_guidance(
+    provider: OpenAIProvider,
+) -> None:
+    intelligence = classify_news("Fed chair explains surprise rate decision")
+    payload = await _call_and_capture_payload_with_story(
+        provider, "Fed chair explains surprise rate decision", intelligence, _story()
+    )
+    content = payload["messages"][1]["content"]
+    assert "يأتي هذا التطور بعد" in content
+    assert "never copy the previous headline" in content
+    assert "never retell the whole story" in content

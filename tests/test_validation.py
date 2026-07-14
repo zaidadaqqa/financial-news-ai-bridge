@@ -131,11 +131,11 @@ def test_required_numbers_keep_genuine_market_figures() -> None:
         "German HICP Final MoM Actual -0.2% (Forecast -0.2%, Previous -0.2%)"
     )
     assert "-0.2%" in required and "-0.2" in required
-    # Numeric range without a month: both ends stay protected (the tail via
-    # its signed form — enforcement accepts signed-or-bare, and the existing
-    # end-to-end range test proves the pass path).
+    # Percent range: both UNSIGNED endpoints are individually mandatory
+    # (2026-07-14 family-B fix — the hyphen is a range dash, not a minus).
     ranged = extract_required_numbers("Fed holds rates at 5.25%-5.50%")
-    assert "5.25%" in ranged and "-5.50%" in ranged
+    assert "5.25%" in ranged and "5.50%" in ranged
+    assert "-5.50%" not in ranged and "-5.50" not in ranged
     assert "3.1%" in extract_required_numbers("US CPI YoY at 3.1%")
     assert "2023" in extract_required_numbers("Deficit widened in 2023")
 
@@ -209,3 +209,116 @@ def test_arabic_ratio_mechanics() -> None:
     assert _arabic_letter_ratio("بيانات CPI عند 3.1% USD") == 1.0
     # Nothing alphabetic at all → passes (nothing to judge).
     assert _arabic_letter_ratio("3.1% — 54.2") == 1.0
+
+
+# ---------------------------------------------------------------------------
+# Validator defect family A (2026-07-14): comma-separated thousands.
+# Real loss: "Previous 2,090" fragmented into "2" + "090" and the validator
+# demanded a phantom "090" from the Arabic output.
+# ---------------------------------------------------------------------------
+
+
+def test_comma_thousands_are_one_number() -> None:
+    required = extract_required_numbers(
+        "New Zealand Visitor Arrivals Actual 1860 (Forecast -, Previous 2,090)"
+    )
+    assert "2090" in required
+    assert "090" not in required and "090%" not in required
+    assert "1860" in required
+
+
+def test_comma_thousands_forms() -> None:
+    for source, expected in (
+        ("Deficit at 1,000 units", "1000"),
+        ("Imports reached 10,500 tonnes", "10500"),
+        ("Index closed at 1,234.5 points", "1234.5"),
+        ("Balance swung to -2,090 million", "-2090"),
+    ):
+        required = extract_required_numbers(source)
+        assert expected in required, (source, required)
+    # A grammatical comma between two numbers is not a thousands separator.
+    required = extract_required_numbers("In 2024, 45% of output was exported")
+    assert "2024" in required and "45%" in required
+    assert "2024," not in required
+
+
+def test_validator_passes_arabic_writing_thousands_either_way() -> None:
+    original = "New Zealand Visitor Arrivals Actual 1860 (Forecast -, Previous 2,090)"
+    for previous_form in ("2,090", "2090"):
+        output = {
+            **ARABIC_NO_NUMBERS,
+            "headline_ar": f"وافدو نيوزيلندا يبلغون 1860 مقابل {previous_form} سابقًا",
+            "translation_ar": f"بلغ عدد الوافدين 1860 بعد {previous_form} في القراءة السابقة",  # noqa: E501
+            "actual": "1860",
+            "previous": previous_form,
+        }
+        OutputValidator.validate_ai_output(original, output)
+
+
+def test_validator_fails_when_thousands_number_dropped() -> None:
+    original = "Visitor Arrivals Actual 1860 (Forecast -, Previous 2,090)"
+    output = {
+        **ARABIC_NO_NUMBERS,
+        "headline_ar": "عدد الوافدين يبلغ 1860",
+        "translation_ar": "بلغ عدد الوافدين 1860",
+        "actual": "1860",
+    }
+    with pytest.raises(ValidationError, match="2090"):
+        OutputValidator.validate_ai_output(original, output)
+
+
+# ---------------------------------------------------------------------------
+# Validator defect family B (2026-07-14): percent ranges vs AI rephrasing.
+# Real loss: "aim for 1.5%-2.5% inflation" — the AI's natural «بين 1.5%
+# و2.5%» was rejected for missing the phantom signed token "-2.5%".
+# ---------------------------------------------------------------------------
+
+
+def test_percent_range_rephrased_naturally_passes() -> None:
+    original = "Fed's Waller: Seems reasonable to aim for 1.5%-2.5% inflation"
+    output = {
+        **ARABIC_NO_NUMBERS,
+        "headline_ar": "وولر: من المنطقي استهداف تضخم بين 1.5% و2.5%",
+        "translation_ar": "قال وولر إن استهداف تضخم بين 1.5% و2.5% يبدو منطقيًا",
+    }
+    OutputValidator.validate_ai_output(original, output)
+
+
+def test_percent_range_hyphenated_output_still_passes() -> None:
+    original = "Fed holds rates at 5.25%-5.50%"
+    output = {
+        **ARABIC_NO_NUMBERS,
+        "headline_ar": "الفيدرالي يثبت الفائدة عند 5.25%-5.50%",
+        "translation_ar": "أبقى الفيدرالي الفائدة في نطاق 5.25%-5.50%",
+    }
+    OutputValidator.validate_ai_output(original, output)
+
+
+def test_percent_range_changed_or_dropped_endpoint_fails() -> None:
+    original = "Fed's Waller: Seems reasonable to aim for 1.5%-2.5% inflation"
+    changed = {
+        **ARABIC_NO_NUMBERS,
+        "headline_ar": "وولر: من المنطقي استهداف تضخم بين 1.5% و3%",
+        "translation_ar": "استهداف تضخم بين 1.5% و3% يبدو منطقيًا",
+    }
+    with pytest.raises(ValidationError, match="2.5"):
+        OutputValidator.validate_ai_output(original, changed)
+    midpoint = {
+        **ARABIC_NO_NUMBERS,
+        "headline_ar": "وولر يستهدف تضخمًا عند 2%",
+        "translation_ar": "يستهدف وولر تضخمًا عند 2% تقريبًا",
+    }
+    with pytest.raises(ValidationError):
+        OutputValidator.validate_ai_output(original, midpoint)
+
+
+def test_percent_range_endpoints_extracted_unsigned() -> None:
+    required = extract_required_numbers("target of 2.0%–3.0% next year")
+    assert "2.0%" in required and "3.0%" in required
+    assert "-3.0" not in required and "-3.0%" not in required
+    # Non-percent hyphen pairs keep the pre-existing behavior untouched.
+    years = extract_required_numbers("guidance covers 2024-2025")
+    assert "2024" in required or "2024" in years  # years still enforced
+    # Negative endpoints never loosen: conservative fallback to old handling.
+    negative = extract_required_numbers("swing of -0.5%-0.2% expected")
+    assert "-0.5%" in negative

@@ -110,7 +110,11 @@ def _story_context_lines(story: StoryDecision) -> list[str]:
         "story this desk has already covered.",
         f"previous_development{when}: {story.prior_original_headline}",
         "Story rules: you may reflect this continuity naturally in your "
-        "Arabic prose when it helps the reader. Do not invent any story "
+        "Arabic prose when it helps the reader — prefer a single natural "
+        "connective such as يأتي هذا التطور بعد… / يمثل هذا التحديث… / "
+        "يأتي التصريح ردًا على… / يصحح الإعلان…, used only when factually "
+        "supported. Explain what CHANGED; never copy the previous headline "
+        "verbatim and never retell the whole story. Do not invent any story "
         "history beyond the previous development given above, do not "
         "describe the connection as more certain than stated, and do not "
         "claim any market reaction that is not stated in the headlines "
