@@ -91,7 +91,6 @@ comparison succeeded. The reader never sees internal metadata, confidence scores
 ```
 📊 التضخم في منطقة اليورو يتباطأ إلى 2.4% في يونيو
 
-─────────────────────
 أظهرت البيانات الأولية تباطؤ التضخم السنوي في منطقة اليورو إلى 2.4%،
 متماشيًا مع توقعات الأسواق.
 
@@ -103,7 +102,6 @@ comparison succeeded. The reader never sees internal metadata, confidence scores
 ⚡ التأثير على الأسواق:
 يعزز هذا التباطؤ توقعات خفض الفائدة الأوروبية في الاجتماع المقبل.
 
-· · · · · · · · · ·
 محايد • الأهمية: مهمة
 المصدر: F.J. · 09:00 UTC
 ```
