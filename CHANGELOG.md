@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.2.0] - 2026-07-17 — Permanent six-hour pinned intelligence digest
+
+### Added
+- **Rolling pinned digest**: one permanent, project-owned Telegram message — created once,
+  pinned silently, and edited in place every six hours (00/06/12/18 UTC) with the most
+  important story-level developments of the completed window. Recovers safely if manually
+  unpinned or deleted (single-shot replacement); never touches unrelated pinned messages.
+- **Deterministic selection**: PUBLISHED-only candidates, story-level deduplication via
+  Story Intelligence links, repetition exclusion, explicit ranking (breaking tier →
+  importance → category precedence → recency → id), diversity caps, max 10 entries,
+  honest quiet-period fallback — no AI in selection or ordering.
+- **Zero-new-AI rendering**: digest prose is composed exclusively from already-validated
+  stored Arabic (headline + summary), so no new numeric-integrity or prompt surface exists;
+  separator-free layout, frozen-registry emojis, bidi-safe isolated timestamps, explicit
+  length budget under the Telegram limit.
+- **Exactly-once scheduling**: in-process asyncio scheduler with startup recovery of only
+  the most recent completed window, persisted `digest_state` (additive migration), and
+  full failure isolation — a digest failure can never affect individual news publishing.
+- `/health` gains additive digest fields (`digest_status`, `last_digest_window`,
+  `last_digest_success_at`, `next_digest_at`).
+
 ## [3.1.0] - 2026-07-14 — Evidence-based editorial DNA + pipeline robustness
 
 ### Added

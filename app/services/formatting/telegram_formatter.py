@@ -129,6 +129,8 @@ APPROVED_EMOJIS = frozenset(
         "▼",  # below forecast / negative bias direction
         "📡",  # initial raw message header
         "⏳",  # initial raw message pending marker
+        "📌",  # digest header (promoted from RESERVED, NEWSROOM_DNA §13)
+        "🕒",  # digest time-range line (six-hour window)
         *COUNTRY_FLAGS.values(),
     }
 )

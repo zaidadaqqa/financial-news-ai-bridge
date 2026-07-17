@@ -10,12 +10,14 @@ from fastapi import FastAPI
 from app.api.health import router as health_router
 from app.config.settings import settings
 from app.log.logger import get_logger, setup_logging
+from app.services.digest.scheduler import DigestScheduler
 from app.services.ingestion.rss_poller import RSSPoller
 
 setup_logging(settings.LOG_LEVEL)
 logger = get_logger(__name__)
 
 _rss_poller: RSSPoller | None = None
+_digest_scheduler: DigestScheduler | None = None
 
 
 def _run_migrations() -> None:
@@ -36,7 +38,7 @@ def _run_migrations() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
-    global _rss_poller
+    global _rss_poller, _digest_scheduler
 
     logger.info("Starting Financial News AI Bridge", env=settings.APP_ENV)
 
@@ -50,17 +52,24 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     rss_task = asyncio.create_task(_rss_poller.start())
     logger.info("RSS poller started in background")
 
+    _digest_scheduler = DigestScheduler()
+    digest_task = asyncio.create_task(_digest_scheduler.start())
+    logger.info("Digest scheduler started in background")
+
     yield
 
     logger.info("Shutting down gracefully...")
     if _rss_poller:
         await _rss_poller.close()
-    if rss_task and not rss_task.done():
-        rss_task.cancel()
-        try:
-            await asyncio.wait_for(rss_task, timeout=5.0)
-        except (asyncio.CancelledError, TimeoutError):
-            pass
+    if _digest_scheduler:
+        await _digest_scheduler.close()
+    for task in (rss_task, digest_task):
+        if task and not task.done():
+            task.cancel()
+            try:
+                await asyncio.wait_for(task, timeout=5.0)
+            except (asyncio.CancelledError, TimeoutError):
+                pass
     logger.info("Shutdown complete")
 
 

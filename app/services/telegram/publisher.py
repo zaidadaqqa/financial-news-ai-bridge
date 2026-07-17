@@ -107,5 +107,86 @@ class TelegramPublisher:
             )
             raise RetryableError("Network error editing Telegram message") from e
 
+    @retry(
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        stop=stop_after_attempt(3),
+        retry=retry_if_exception_type(RetryableError),
+    )
+    async def pin_chat_message(
+        self, message_id: str, disable_notification: bool = True
+    ) -> bool:
+        url = f"{self.base_url}/pinChatMessage"
+        payload = {
+            "chat_id": self.chat_id,
+            "message_id": int(message_id),
+            "disable_notification": disable_notification,
+        }
+
+        try:
+            response = await self.client.post(url, json=payload)
+            if response.status_code == 429:
+                raise RetryableError("Telegram API Rate Limit (429)")
+
+            if response.status_code == 200 and response.json().get("ok"):
+                logger.info("Telegram message pinned", message_id=message_id)
+                return True
+
+            # Pin failure is non-fatal by design: an unpinned digest is a
+            # cosmetic defect the next cycle repairs, so the caller gets
+            # False instead of an exception.
+            logger.warning(
+                "Telegram pin failed",
+                message_id=message_id,
+                status_code=response.status_code,
+                description=self._api_description(response),
+            )
+            return False
+
+        except httpx.RequestError as e:
+            logger.error(
+                "Network error pinning Telegram message", error=type(e).__name__
+            )
+            raise RetryableError("Network error pinning Telegram message") from e
+
+    @retry(
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        stop=stop_after_attempt(3),
+        retry=retry_if_exception_type(RetryableError),
+    )
+    async def get_chat(self) -> dict | None:
+        url = f"{self.base_url}/getChat"
+        payload = {"chat_id": self.chat_id}
+
+        try:
+            response = await self.client.post(url, json=payload)
+            if response.status_code == 429:
+                raise RetryableError("Telegram API Rate Limit (429)")
+
+            if response.status_code == 200:
+                data = response.json()
+                result = data.get("result")
+                if data.get("ok") and isinstance(result, dict):
+                    return result
+
+            logger.warning(
+                "Telegram getChat failed",
+                status_code=response.status_code,
+                description=self._api_description(response),
+            )
+            return None
+
+        except httpx.RequestError as e:
+            logger.error(
+                "Network error calling Telegram getChat", error=type(e).__name__
+            )
+            raise RetryableError("Network error calling Telegram getChat") from e
+
+    @staticmethod
+    def _api_description(response: httpx.Response) -> str:
+        try:
+            return str(response.json().get("description", ""))[:200]
+        except ValueError:
+            return ""
+
     async def close(self) -> None:
         await self.client.aclose()
